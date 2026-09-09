@@ -74,3 +74,9 @@ Once analysis execution begins, its engineering configuration becomes immutable.
 Mesh configuration is an engineering input because it affects calculated results. Intermediate and final artifacts needed to audit a result should be traceable to the executed analysis.
 
 Reproducibility also requires explicit unit conventions, coordinate-system interpretation, element and result extraction choices, and software environment details. The exact conventions and structured result schema have not yet been selected; they must be made explicit as part of the Engineering Spike rather than assumed silently.
+
+## Cantilever CAD-to-mesh spike
+
+The deterministic benchmark fixture is a rectangular solid in SI units: 1.0 m long in X and 0.05 m by 0.05 m in cross-section. Its fixed face is located geometrically at `x = 0`; its load face is at `x = 1.0 m`. End faces are selected using bounding-box evidence and exact-count validation, not assumed CAD entity identifiers.
+
+The initial uniform tetrahedral target size is 0.0125 m, configurable at execution time. This gives four nominal element lengths across each cross-section dimension. It is a provisional spike setting chosen for tractable inspection, not a validated production meshing strategy. Mesh convergence and refinement criteria remain future validation work.

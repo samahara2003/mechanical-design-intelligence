@@ -36,6 +36,10 @@ The structured result must eventually contain, at minimum:
 
 The spike should be demonstrated using a known engineering case with recorded validation evidence. Python modules should be deterministic and testable. Inputs, intermediate artifacts, configuration, tool versions, and outputs must remain traceable enough to reproduce and interpret the result.
 
+The initial CAD-to-mesh implementation uses Python standard-library orchestration to invoke the installed Gmsh command-line executable through `subprocess`. Gmsh is discovered through `PATH`; no machine-specific executable path is part of the workflow. The Gmsh Python API is deferred to avoid introducing Python-binding compatibility and packaging concerns before they provide a demonstrated benefit.
+
+STEP remains the actual CAD input boundary. The cantilever benchmark STEP file may be created deterministically as a test fixture, but meshing occurs in a separate operation that imports that STEP through Gmsh/OpenCASCADE. Named physical groups (`beam`, `fixed`, and `load`) carry geometry semantics into mesh sets intended for downstream FEA input.
+
 ### Spike constraints
 
 The spike does not include a web UI, API product surface, database, authentication, cloud deployment, durable queue, SSE, AI review, distributed execution, production infrastructure, or DFM functionality. It must not introduce a custom finite element solver or speculative infrastructure.

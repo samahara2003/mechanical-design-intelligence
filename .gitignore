@@ -1,0 +1,6 @@
+# Reproducible Engineering Spike outputs
+artifacts/
+
+# Python bytecode
+__pycache__/
+*.py[cod]
