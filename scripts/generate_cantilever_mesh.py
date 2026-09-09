@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 import shutil
@@ -217,6 +218,13 @@ def main() -> int:
     if gmsh is None:
         print("error: gmsh was not found on PATH", file=sys.stderr)
         return 1
+    gmsh_version_result = subprocess.run(
+        [gmsh, "--version"], capture_output=True, check=False, text=True, timeout=10
+    )
+    if gmsh_version_result.returncode != 0 or not gmsh_version_result.stdout.strip():
+        print("error: unable to identify the Gmsh version", file=sys.stderr)
+        return 1
+    gmsh_version = gmsh_version_result.stdout.strip().splitlines()[0]
 
     output_dir = args.output_dir.resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -225,7 +233,8 @@ def main() -> int:
     step_path = output_dir / "cantilever.step"
     msh_path = output_dir / "cantilever.msh"
     inp_path = output_dir / "cantilever_mesh.inp"
-    for generated_output in (step_path, msh_path, inp_path):
+    summary_path = output_dir / "cantilever_mesh_summary.json"
+    for generated_output in (step_path, msh_path, inp_path, summary_path):
         generated_output.unlink(missing_ok=True)
 
     try:
@@ -248,6 +257,7 @@ def main() -> int:
         "status": "ok",
         "units": "SI (metres)",
         "gmsh_executable": gmsh,
+        "gmsh_version": gmsh_version,
         "geometry": geometry,
         "mesh_size_m": args.mesh_size,
         "mesh": mesh,
@@ -255,8 +265,11 @@ def main() -> int:
             "step": str(step_path),
             "msh": str(msh_path),
             "calculix_inp": str(inp_path),
+            "msh_sha256": hashlib.sha256(msh_path.read_bytes()).hexdigest(),
         },
     }
+    summary_path.write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
+    summary["artifacts"]["summary"] = str(summary_path)
     print(json.dumps(summary, indent=2))
     return 0
 
