@@ -1,0 +1,76 @@
+# Engineering Assumptions and Limitations
+
+## Governing principle
+
+Deterministic engineering calculations are the technical source of truth. AI may explain recorded inputs, results, assumptions, limitations, and provenance, but must not calculate or override engineering pass/fail status and must not infer technical truth from rendered result images.
+
+## V1 model assumptions
+
+Every V1 analysis is constrained to:
+
+- one solid part imported from STEP;
+- linear static structural behavior;
+- a linear elastic, isotropic material model;
+- small deformations;
+- simplified fixed boundary conditions;
+- force and/or pressure loads;
+- tetrahedral finite elements generated with Gmsh/OpenCASCADE; and
+- solution with CalculiX.
+
+These assumptions imply that stiffness is constant, material response remains within the linear elastic regime used by the model, and deformation is sufficiently small for geometric nonlinearity to be neglected. The user is responsible for selecting inputs and idealizations that are appropriate to the physical case; the system must expose the assumptions needed to judge that appropriateness.
+
+## V1 limitations
+
+V1 does not model:
+
+- plasticity or nonlinear material behavior;
+- large deformation or geometric nonlinearity;
+- contact or friction;
+- bolt preload;
+- fatigue;
+- transient or dynamic response;
+- thermal behavior or thermal loading; or
+- assemblies.
+
+Results must not be presented as covering these excluded phenomena. Physics scope may expand only through an explicit later decision.
+
+## Factor of safety interpretation
+
+The initial failure criterion is intended for ductile materials and uses:
+
+`actual FoS = yield strength / relevant von Mises stress`
+
+The yield strength must be the snapshotted value actually used by the executed analysis. The relevant von Mises stress must come from deterministic post-processing and must retain enough context to identify how and where it was obtained.
+
+`actual FoS > 1` is not, by itself, a passing result. Pass/fail is evaluated against the user's configured requirement:
+
+- pass when `actual FoS >= required FoS`;
+- fail to meet the configured requirement when `actual FoS < required FoS`.
+
+This comparison is deterministic and must not be delegated to AI. The present requirements do not define special handling for zero stress, invalid or missing yield strength, numerical failure, or rounding at the threshold; those behaviors must be specified before production implementation.
+
+## Stress interpretation and singularities
+
+Mesh-dependent stress concentrations and mathematical singularities can make a maximum nodal stress non-convergent or physically misleading. Therefore, the global maximum nodal stress must not automatically be presented as universally meaningful engineering truth. Reports and validation evidence should retain its location, extraction method, mesh context, and known limitations.
+
+V1 is not required to implement a sophisticated singularity detector unless explicitly requested. This limitation does not remove the obligation to acknowledge suspected singular behavior and avoid unsupported conclusions.
+
+## Reproducibility and immutable provenance
+
+Once analysis execution begins, its engineering configuration becomes immutable. Each executed analysis must preserve an immutable snapshot sufficient to interpret and reproduce the result, including:
+
+- CAD/model version and file checksum;
+- material properties actually used, including yield strength and units;
+- loads, their units, directions, magnitudes, and application definitions;
+- boundary conditions and their application definitions;
+- user-required minimum FoS;
+- mesh configuration;
+- mesher name and version;
+- solver configuration;
+- solver name and version;
+- applicable engineering assumptions and limitations; and
+- result provenance, linking reported values to source solver output and post-processing.
+
+Mesh configuration is an engineering input because it affects calculated results. Intermediate and final artifacts needed to audit a result should be traceable to the executed analysis.
+
+Reproducibility also requires explicit unit conventions, coordinate-system interpretation, element and result extraction choices, and software environment details. The exact conventions and structured result schema have not yet been selected; they must be made explicit as part of the Engineering Spike rather than assumed silently.
