@@ -91,4 +91,28 @@ The observed magnitude comparison is:
 - relative error: `0.0020317677157889935`; and
 - percent error: `0.20317677157889935%`.
 
-The negative FEA sign is consistent with the applied negative-Z load. This result establishes a reproducible comparison of the selected displacement quantity through the current STEP-to-CalculiX pipeline. No formal acceptance threshold has been set. One mesh result is not a convergence study and cannot establish discretization independence. Euler-Bernoulli theory is itself an idealized beam model, while the FEA model is a three-dimensional solid with fixed-end local effects. This comparison does not verify stress results. The next verification step is mesh convergence; C3D4-versus-C3D10 comparison remains later work.
+The negative FEA sign is consistent with the applied negative-Z load. This result establishes a reproducible comparison of the selected displacement quantity through the current STEP-to-CalculiX pipeline. No formal acceptance threshold has been set. One mesh result alone is not a convergence study and cannot establish discretization independence. Euler-Bernoulli theory is itself an idealized beam model, while the FEA model is a three-dimensional solid with fixed-end local effects. This comparison does not verify stress results. C3D4-versus-C3D10 comparison remains later work.
+
+## C3D10 displacement mesh-convergence study
+
+The displacement convergence experiment changes only the uniform Gmsh characteristic mesh size. STEP geometry, material, 1000 N negative-Z resultant, consistent uniform-traction load mapping, fully fixed end, C3D10 formulation, CalculiX linear-static settings, and the free-end centroid `UZ` quantity remain fixed. Mesh sizes follow a preselected geometric refinement factor of `sqrt(2)`:
+
+- coarse: `0.025 m`;
+- medium: `0.017677669529663688 m`;
+- fine: `0.0125 m`, preserving the original successful mesh; and
+- finer: `0.008838834764831844 m`.
+
+This progression uses a fixed geometric characteristic-length refinement ratio of `sqrt(2)`. It was selected around the existing four-elements-across-section target before evaluating convergence results, not tuned to improve agreement.
+
+| Level | Nodes | C3D10 elements | Centroid UZ (m) | Analytical error | Change from previous |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| coarse | 1,851 | 804 | -0.003191318918668 | 0.271283792% | — |
+| medium | 5,866 | 2,883 | -0.003192322994337 | 0.239906427% | 0.031462718% |
+| fine | 13,218 | 7,242 | -0.003193498343309 | 0.203176772% | 0.036817984% |
+| finer | 31,742 | 18,925 | -0.003194353096108 | 0.176465747% | 0.026765406% |
+
+Successive relative change is the absolute change in signed centroid `UZ` divided by the previous mesh's displacement magnitude. The medium centroid lay on a shared face edge, producing two interpolation candidates; their quadratic interpolations agreed within the recorded numerical tolerance. All other levels had one containing face candidate. For every level, the integrated applied load was approximately `-1000 N` in Z, the fixed reaction was `+1000 N` in Z, displacement had the expected negative sign, and no CalculiX warning was reported.
+
+The displacement sequence appears to be stabilizing: changes between successive meshes are roughly three hundredths of one percent, and analytical difference decreases across these four levels. The successive-change magnitude is not strictly monotonic, however, and no formal convergence or acceptance threshold has been defined. Analytical error and successive-refinement change answer different questions: the former compares the 3D model with Euler-Bernoulli beam theory, while the latter measures sensitivity to discretization within the 3D model.
+
+The converged three-dimensional elasticity solution is not required to equal exactly `3.200000 mm`, because it and Euler-Bernoulli theory are not mathematically identical models. This study addresses displacement only. It does not establish stress convergence, resolve fixed-boundary stress effects, verify C3D4 behavior, or generally verify the solver or project.

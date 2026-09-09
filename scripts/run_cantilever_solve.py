@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 import json
 import math
 import re
@@ -273,8 +274,20 @@ def inspect_dat(path: Path, nodes: dict[int, tuple[float, float, float]]) -> dic
     }
 
 
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=Path("artifacts/cantilever"),
+        help="directory containing cantilever.msh (default: artifacts/cantilever)",
+    )
+    return parser.parse_args()
+
+
 def main() -> int:
-    output_dir = Path("artifacts/cantilever").resolve()
+    args = parse_args()
+    output_dir = args.output_dir.resolve()
     mesh_path = output_dir / "cantilever.msh"
     if not mesh_path.is_file():
         print(f"error: mesh not found; run generate_cantilever_mesh.py first: {mesh_path}", file=sys.stderr)

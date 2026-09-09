@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 import hashlib
 import json
 import math
@@ -186,8 +187,20 @@ def sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=Path("artifacts/cantilever"),
+        help="directory containing mesh and solve artifacts (default: artifacts/cantilever)",
+    )
+    return parser.parse_args()
+
+
 def main() -> int:
-    output_dir = Path("artifacts/cantilever").resolve()
+    args = parse_args()
+    output_dir = args.output_dir.resolve()
     mesh_path = output_dir / "cantilever.msh"
     mesh_summary_path = output_dir / "cantilever_mesh_summary.json"
     deck_path = output_dir / "cantilever_static.inp"
