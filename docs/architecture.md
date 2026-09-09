@@ -40,6 +40,8 @@ The initial CAD-to-mesh implementation uses Python standard-library orchestratio
 
 STEP remains the actual CAD input boundary. The cantilever benchmark STEP file may be created deterministically as a test fixture, but meshing occurs in a separate operation that imports that STEP through Gmsh/OpenCASCADE. Named physical groups (`beam`, `fixed`, and `load`) carry geometry semantics into mesh sets intended for downstream FEA input.
 
+The first solve milestone extends this local flow with a second standard-library Python process that prepares a minimal CalculiX deck and invokes `ccx` from `PATH` through `subprocess`. This is spike orchestration, not a production result parser or job-execution architecture. The deck is derived from the Gmsh physical groups rather than arbitrary geometry entity identifiers.
+
 ### Spike constraints
 
 The spike does not include a web UI, API product surface, database, authentication, cloud deployment, durable queue, SSE, AI review, distributed execution, production infrastructure, or DFM functionality. It must not introduce a custom finite element solver or speculative infrastructure.

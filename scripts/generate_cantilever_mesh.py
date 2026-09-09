@@ -22,6 +22,8 @@ ELEMENT_TYPE_NAMES = {
     1: "2-node line",
     2: "3-node triangle",
     4: "4-node tetrahedron",
+    9: "6-node second-order triangle",
+    11: "10-node second-order tetrahedron",
     15: "1-node point",
 }
 
@@ -98,6 +100,7 @@ Physical Surface("load", 3) = {{load[]}};
 Mesh.MeshSizeMin = {mesh_size_m};
 Mesh.MeshSizeMax = {mesh_size_m};
 Mesh.Algorithm3D = 1;
+Mesh.ElementOrder = 2;
 Mesh.MshFileVersion = 2.2;
 Mesh.Binary = 0;
 Mesh 3;
@@ -162,14 +165,15 @@ def parse_msh(path: Path) -> dict[str, object]:
             f"Unexpected physical groups in {path}: {physical_names}; expected {expected_groups}"
         )
 
-    tetrahedron_count = type_counts.get(4, 0)
+    tetrahedron_count = type_counts.get(11, 0)
     if tetrahedron_count == 0:
-        raise SpikeError(f"No first-order tetrahedral elements were found in {path}")
+        raise SpikeError(f"No 10-node second-order tetrahedral elements were found in {path}")
 
     return {
         "node_count": node_count,
         "element_count": element_count,
         "volume_element_count": tetrahedron_count,
+        "volume_element_type": "C3D10",
         "element_types": [
             {
                 "gmsh_type": element_type,
