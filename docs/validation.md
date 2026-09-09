@@ -71,7 +71,7 @@ The first executable check generates a deterministic cantilever STEP fixture and
 
 The next spike check requires Gmsh type-11 volume connectivity, converts and verifies it as CalculiX `C3D10`, and performs a linear-static solve. Before execution it confirms that the fixed/load mesh groups lie on their expected X coordinates, every six-node load triangle maps to one C3D10 face, the surface area integrates to 0.0025 m², and the consistent negative-Z nodal loads sum to -1000 N.
 
-The post-solve inspection is deliberately narrow: CalculiX must report job completion, displacement must be nonzero and directed consistently with the load, maximum displacement must occur at the free end, stress output must exist, and fixed-support Z reaction must balance the applied Z load. These are pipeline and basic structural-sanity checks, not formal verification. The first quantitative analytical comparison will primarily use tip displacement. Fixed-boundary local stresses are not treated as proof of correctness; their concentration or singularity behavior, C3D4-versus-C3D10 behavior, and mesh convergence remain future verification work.
+The post-solve inspection is deliberately narrow: CalculiX must report job completion, displacement must be nonzero and directed consistently with the load, maximum displacement must occur at the free end, stress output must exist, and fixed-support Z reaction must balance the applied Z load. These are pipeline and basic structural-sanity checks, not formal verification. The first quantitative analytical comparison primarily uses tip displacement. Fixed-boundary local stresses are not treated as proof of correctness; their concentration or singularity behavior remains future verification work.
 
 ## Cantilever analytical displacement benchmark
 
@@ -85,13 +85,13 @@ For the frozen inputs, `I = 5.208333333333335e-7 m^4` and the analytical tip-dis
 
 The numerical quantity of interest is not the maximum displacement magnitude in the mesh. It is signed global `UZ` at the centroid of the free-end cross-section, `(1.0, 0.025, 0.025) m`, corresponding to the Euler-Bernoulli centroidal axis. The current mesh has no node at that coordinate. The value is therefore evaluated using the quadratic shape functions of the six-node load-face triangle containing the point. For the current mesh, surface element 86 uniquely contains the centroid and gives `UZ = -0.0031934983433094745 m`.
 
-The observed magnitude comparison is:
+The observed magnitude disagreement with the Euler-Bernoulli reference is:
 
-- absolute error: `6.501656690524778e-6 m`;
-- relative error: `0.0020317677157889935`; and
-- percent error: `0.20317677157889935%`.
+- absolute difference: `6.501656690524778e-6 m`;
+- relative difference: `0.0020317677157889935`; and
+- percent difference: `0.20317677157889935%`.
 
-The negative FEA sign is consistent with the applied negative-Z load. This result establishes a reproducible comparison of the selected displacement quantity through the current STEP-to-CalculiX pipeline. No formal acceptance threshold has been set. One mesh result alone is not a convergence study and cannot establish discretization independence. Euler-Bernoulli theory is itself an idealized beam model, while the FEA model is a three-dimensional solid with fixed-end local effects. This comparison does not verify stress results. C3D4-versus-C3D10 comparison remains later work.
+The negative FEA sign is consistent with the applied negative-Z load. This result establishes a reproducible comparison of the selected displacement quantity through the current STEP-to-CalculiX pipeline. No formal acceptance threshold has been set. One mesh result alone is not a convergence study and cannot establish discretization independence. Euler-Bernoulli theory is itself an idealized beam model, while the FEA model is a three-dimensional solid with fixed-end local effects. This comparison does not verify stress results.
 
 ## C3D10 displacement mesh-convergence study
 
@@ -104,7 +104,7 @@ The displacement convergence experiment changes only the uniform Gmsh characteri
 
 This progression uses a fixed geometric characteristic-length refinement ratio of `sqrt(2)`. It was selected around the existing four-elements-across-section target before evaluating convergence results, not tuned to improve agreement.
 
-| Level | Nodes | C3D10 elements | Centroid UZ (m) | Analytical error | Change from previous |
+| Level | Nodes | C3D10 elements | Centroid UZ (m) | Euler-Bernoulli disagreement | Change from previous |
 | --- | ---: | ---: | ---: | ---: | ---: |
 | coarse | 1,851 | 804 | -0.003191318918668 | 0.271283792% | — |
 | medium | 5,866 | 2,883 | -0.003192322994337 | 0.239906427% | 0.031462718% |
@@ -113,6 +113,29 @@ This progression uses a fixed geometric characteristic-length refinement ratio o
 
 Successive relative change is the absolute change in signed centroid `UZ` divided by the previous mesh's displacement magnitude. The medium centroid lay on a shared face edge, producing two interpolation candidates; their quadratic interpolations agreed within the recorded numerical tolerance. All other levels had one containing face candidate. For every level, the integrated applied load was approximately `-1000 N` in Z, the fixed reaction was `+1000 N` in Z, displacement had the expected negative sign, and no CalculiX warning was reported.
 
-The displacement sequence appears to be stabilizing: changes between successive meshes are roughly three hundredths of one percent, and analytical difference decreases across these four levels. The successive-change magnitude is not strictly monotonic, however, and no formal convergence or acceptance threshold has been defined. Analytical error and successive-refinement change answer different questions: the former compares the 3D model with Euler-Bernoulli beam theory, while the latter measures sensitivity to discretization within the 3D model.
+The displacement sequence appears to be stabilizing: changes between successive meshes are roughly three hundredths of one percent, and analytical difference decreases across these four levels. The successive-change magnitude is not strictly monotonic, however, and no formal convergence or acceptance threshold has been defined. Euler-Bernoulli disagreement and successive-refinement change answer different questions: the former compares two non-identical mathematical models, while the latter measures sensitivity to discretization within the 3D model.
 
-The converged three-dimensional elasticity solution is not required to equal exactly `3.200000 mm`, because it and Euler-Bernoulli theory are not mathematically identical models. This study addresses displacement only. It does not establish stress convergence, resolve fixed-boundary stress effects, verify C3D4 behavior, or generally verify the solver or project.
+A limiting three-dimensional elasticity solution under further mesh refinement would not be required to equal exactly `3.200000 mm`, because it and Euler-Bernoulli theory are not mathematically identical models. This study addresses displacement only. It does not establish stress convergence, resolve fixed-boundary stress effects, or generally verify the solver or project.
+
+## C3D4 versus C3D10 displacement study
+
+This bending-dominated experiment examines element formulation/order behavior while leaving the physical benchmark unchanged. Both C3D4 and C3D10 use the same four characteristic sizes (`0.025`, `0.017677669529663688`, `0.0125`, and `0.008838834764831844 m`), STEP geometry, material, consistent 1000 N negative-Z traction resultant, fixed boundary, linear-static solver settings, analytical reference, and free-end centroid `UZ` quantity.
+
+C3D4 uses three-node triangular boundary faces, equal one-third-area consistent nodal traction contributions, and linear face interpolation. C3D10 retains six-node faces, its established consistent nodal traction integration, and quadratic face interpolation. Gmsh's C3D4 CalculiX export is checked against MSH connectivity; the established C3D10 edge-node permutation remains unchanged.
+
+| Formulation | Level | Nodes | Elements | Centroid UZ (m) | Euler-Bernoulli disagreement | Change from previous | Total runtime (s) |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| C3D4 | coarse | 351 | 804 | -0.001587897076867 | 50.378216% | — | 0.914 |
+| C3D4 | medium | 1,021 | 2,883 | -0.002315851268687 | 27.629648% | 45.843915% | 1.019 |
+| C3D4 | fine | 2,131 | 7,242 | -0.002664575690394 | 16.732010% | 15.058153% | 1.436 |
+| C3D4 | finer | 4,801 | 18,925 | -0.002905532394451 | 9.202113% | 9.042967% | 2.512 |
+| C3D10 | coarse | 1,851 | 804 | -0.003191318918668 | 0.271284% | — | 1.061 |
+| C3D10 | medium | 5,866 | 2,883 | -0.003192322994337 | 0.239906% | 0.031463% | 1.836 |
+| C3D10 | fine | 13,218 | 7,242 | -0.003193498343309 | 0.203177% | 0.036818% | 3.573 |
+| C3D10 | finer | 31,742 | 18,925 | -0.003194353096108 | 0.176466% | 0.026765% | 9.303 |
+
+Within each formulation, reducing characteristic size is h-refinement. Increasing approximation order from C3D4 to C3D10 at a given characteristic size is an element-order or p-refinement comparison. This controlled study is not an hp-adaptive FEM implementation. Identical characteristic size produces the same number of tetrahedra here but not the same node count, degrees of freedom, or computational cost: C3D10 adds midside nodes and its solve cost grows more rapidly.
+
+For this bending-dominated cantilever benchmark and the tested characteristic mesh sizes, C3D4 produced a substantially stiffer displacement response and changed substantially under h-refinement. Its disagreement with the Euler-Bernoulli reference decreases from about 50.38% to 9.20% across the chosen levels but has not stabilized to the degree seen for C3D10. C3D10 results exactly reproduce the established convergence values and show much smaller successive changes and closer agreement with the Euler-Bernoulli reference at greater node, degree-of-freedom, and runtime cost. This behavior does not prove that C3D10 is universally superior: it applies to this geometry, loading, quantity, mesh family, and bending-dominated case.
+
+All eight runs preserve negative displacement sign, approximately `-1000 N` applied Z resultant, `+1000 N` fixed-support Z reaction, and no CalculiX warnings. No acceptance threshold is defined. The study compares displacement only and does not establish stress convergence or general solver accuracy.

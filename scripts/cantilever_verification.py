@@ -113,6 +113,10 @@ def quadratic_triangle_weights(barycentric: tuple[float, float, float]) -> tuple
     )
 
 
+def linear_triangle_weights(barycentric: tuple[float, float, float]) -> tuple[float, ...]:
+    return barycentric
+
+
 def interpolate_tip_uz(
     nodes: dict[int, tuple[float, float, float]],
     load_faces: list[dict],
@@ -136,8 +140,11 @@ def interpolate_tip_uz(
 
     candidates = []
     for face in load_faces:
-        if len(face["nodes"]) != 6:
-            raise VerificationError(f"Load-face element {face['id']} is not a six-node triangle")
+        face_node_count = len(face["nodes"])
+        if face_node_count not in (3, 6):
+            raise VerificationError(
+                f"Load-face element {face['id']} is not a supported three- or six-node triangle"
+            )
         if any(
             abs(nodes[node_id][0] - LENGTH_M) > COORDINATE_TOLERANCE_M
             for node_id in face["nodes"]
@@ -152,7 +159,11 @@ def interpolate_tip_uz(
                 raise VerificationError(
                     f"Displacement output is missing face nodes {missing} for element {face['id']}"
                 )
-            weights = quadratic_triangle_weights(barycentric)
+            weights = (
+                linear_triangle_weights(barycentric)
+                if face_node_count == 3
+                else quadratic_triangle_weights(barycentric)
+            )
             uz = sum(
                 weights[index] * displacements[node_id][2]
                 for index, node_id in enumerate(face["nodes"])
@@ -162,7 +173,7 @@ def interpolate_tip_uz(
                     "surface_element_id": face["id"],
                     "node_ids": face["nodes"],
                     "barycentric_coordinates": list(barycentric),
-                    "quadratic_shape_weights": list(weights),
+                    "shape_weights": list(weights),
                     "uz_m": uz,
                 }
             )
@@ -175,7 +186,11 @@ def interpolate_tip_uz(
             f"{values}"
         )
     return sum(values) / len(values), {
-        "method": "six-node quadratic triangle interpolation",
+        "method": (
+            "three-node linear triangle interpolation"
+            if len(load_faces[0]["nodes"]) == 3
+            else "six-node quadratic triangle interpolation"
+        ),
         "target_m": list(TIP_POINT_M),
         "direct_node_present": False,
         "candidate_count": len(candidates),
@@ -219,13 +234,17 @@ def main() -> int:
             raise VerificationError("Mesh units are missing or ambiguous")
 
         nodes, elements = read_msh(mesh_path)
+        element_type = mesh_summary["mesh"]["volume_element_type"]
+        surface_type = {"C3D4": 2, "C3D10": 9}.get(element_type)
+        if surface_type is None:
+            raise VerificationError(f"Unsupported element type: {element_type}")
         load_faces = [
             element
             for element in elements
-            if element["type"] == 9 and element["physical_tag"] == 3
+            if element["type"] == surface_type and element["physical_tag"] == 3
         ]
         if not load_faces:
-            raise VerificationError("No six-node load-face elements were found")
+            raise VerificationError(f"No load-face elements were found for {element_type}")
         displacements = read_displacements(dat_path)
         fea_uz_m, selection = interpolate_tip_uz(nodes, load_faces, displacements)
 

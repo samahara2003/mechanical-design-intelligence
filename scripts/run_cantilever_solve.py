@@ -21,11 +21,24 @@ COORDINATE_TOLERANCE_M = 1.0e-8
 
 # CalculiX face labels and corresponding C3D10 local node indices. The first
 # three nodes in each tuple are the corner nodes; the final three are midside.
-C3D10_FACES = {
+TETRAHEDRON_FACES = {
+    "C3D4": {
+        "S1": (0, 1, 2),
+        "S2": (0, 3, 1),
+        "S3": (1, 3, 2),
+        "S4": (2, 3, 0),
+    },
+    "C3D10": {
     "S1": (0, 1, 2, 4, 5, 6),
     "S2": (0, 3, 1, 7, 8, 4),
     "S3": (1, 3, 2, 8, 9, 5),
     "S4": (2, 3, 0, 9, 7, 6),
+    },
+}
+
+MESH_ELEMENT_TYPES = {
+    "C3D4": {"volume": 4, "surface": 2, "nodes": 4},
+    "C3D10": {"volume": 11, "surface": 9, "nodes": 10},
 }
 
 
@@ -35,6 +48,13 @@ def as_calculix_c3d10(element: dict) -> dict:
     if len(connectivity) != 10:
         raise SolveError(f"Element {element['id']} does not have 10-node connectivity")
     return {**element, "nodes": connectivity[:8] + [connectivity[9], connectivity[8]]}
+
+
+def as_calculix_c3d4(element: dict) -> dict:
+    """Validate the shared Gmsh/CalculiX four-node tetrahedron ordering."""
+    if len(element["nodes"]) != 4:
+        raise SolveError(f"Element {element['id']} does not have 4-node connectivity")
+    return dict(element)
 
 
 class SolveError(RuntimeError):
@@ -87,12 +107,12 @@ def triangle_area(
 
 
 def map_surface_faces(
-    surface_elements: list[dict], volume_elements: list[dict]
+    surface_elements: list[dict], volume_elements: list[dict], element_type: str
 ) -> list[tuple[int, str]]:
     candidates: dict[frozenset[int], tuple[int, str, frozenset[int]]] = {}
     for element in volume_elements:
         connectivity = element["nodes"]
-        for label, indices in C3D10_FACES.items():
+        for label, indices in TETRAHEDRON_FACES[element_type].items():
             face_nodes = frozenset(connectivity[index] for index in indices)
             corner_nodes = frozenset(connectivity[index] for index in indices[:3])
             candidates[corner_nodes] = (element["id"], label, face_nodes)
@@ -102,12 +122,12 @@ def map_surface_faces(
         corner_nodes = frozenset(surface["nodes"][:3])
         match = candidates.get(corner_nodes)
         if match is None:
-            raise SolveError(f"Surface element {surface['id']} has no C3D10 parent face")
+            raise SolveError(f"Surface element {surface['id']} has no {element_type} parent face")
         volume_id, face_label, expected_nodes = match
         if frozenset(surface["nodes"]) != expected_nodes:
             raise SolveError(
                 f"Surface element {surface['id']} connectivity does not match "
-                f"C3D10 element {volume_id} {face_label}"
+                f"{element_type} element {volume_id} {face_label}"
             )
         mapped.append((volume_id, face_label))
     if len(set(mapped)) != len(mapped):
@@ -119,21 +139,58 @@ def wrapped_ids(values: list[int], width: int = 16) -> list[str]:
     return [", ".join(str(value) for value in values[index : index + width]) for index in range(0, len(values), width)]
 
 
-def prepare_model(mesh_path: Path) -> tuple[dict, str]:
+def verify_c3d4_export_connectivity(path: Path, volumes: list[dict]) -> None:
+    lines = path.read_text(encoding="utf-8").splitlines()
+    try:
+        start = next(
+            index
+            for index, line in enumerate(lines)
+            if line.replace(" ", "").upper().startswith("*ELEMENT,TYPE=C3D4")
+        ) + 1
+    except StopIteration as error:
+        raise SolveError(f"Gmsh CalculiX export contains no C3D4 element block: {path}") from error
+    exported = {}
+    for line in lines[start:]:
+        if line.startswith("*"):
+            break
+        fields = [int(value.strip()) for value in line.split(",") if value.strip()]
+        if fields:
+            exported[fields[0]] = fields[1:]
+    expected = {element["id"]: element["nodes"] for element in volumes}
+    if exported != expected:
+        raise SolveError("C3D4 MSH connectivity does not match Gmsh's CalculiX export")
+
+
+def prepare_model(mesh_path: Path, element_type: str) -> tuple[dict, str]:
     nodes, elements = read_msh(mesh_path)
+    configuration = MESH_ELEMENT_TYPES[element_type]
+    converter = as_calculix_c3d10 if element_type == "C3D10" else as_calculix_c3d4
     volumes = [
-        as_calculix_c3d10(item)
+        converter(item)
         for item in elements
-        if item["type"] == 11 and item["physical_tag"] == 1
+        if item["type"] == configuration["volume"] and item["physical_tag"] == 1
     ]
-    fixed_faces = [item for item in elements if item["type"] == 9 and item["physical_tag"] == 2]
-    load_faces = [item for item in elements if item["type"] == 9 and item["physical_tag"] == 3]
+    fixed_faces = [
+        item
+        for item in elements
+        if item["type"] == configuration["surface"] and item["physical_tag"] == 2
+    ]
+    load_faces = [
+        item
+        for item in elements
+        if item["type"] == configuration["surface"] and item["physical_tag"] == 3
+    ]
     if not volumes or not fixed_faces or not load_faces:
-        raise SolveError("The beam, fixed, and load C3D10 mesh groups must all be nonempty")
-    if any(len(element["nodes"]) != 10 for element in volumes):
-        raise SolveError("A beam volume element does not have C3D10 connectivity")
-    if any(len(element["nodes"]) != 6 for element in fixed_faces + load_faces):
-        raise SolveError("An end-face element does not have six-node triangle connectivity")
+        raise SolveError(f"The beam, fixed, and load {element_type} mesh groups must all be nonempty")
+    if any(len(element["nodes"]) != configuration["nodes"] for element in volumes):
+        raise SolveError(f"A beam volume element does not have {element_type} connectivity")
+    if element_type == "C3D4":
+        verify_c3d4_export_connectivity(mesh_path.with_name("cantilever_mesh.inp"), volumes)
+    surface_node_count = 6 if element_type == "C3D10" else 3
+    if any(len(element["nodes"]) != surface_node_count for element in fixed_faces + load_faces):
+        raise SolveError(
+            f"An end-face element does not have {surface_node_count}-node triangle connectivity"
+        )
 
     fixed_nodes = sorted({node for face in fixed_faces for node in face["nodes"]})
     load_nodes = sorted({node for face in load_faces for node in face["nodes"]})
@@ -142,16 +199,17 @@ def prepare_model(mesh_path: Path) -> tuple[dict, str]:
     if any(abs(nodes[node][0] - 1.0) > COORDINATE_TOLERANCE_M for node in load_nodes):
         raise SolveError("The load node set contains a node away from x=1 m")
 
-    load_surface = map_surface_faces(load_faces, volumes)
+    load_surface = map_surface_faces(load_faces, volumes, element_type)
     nodal_forces: dict[int, float] = {}
     integrated_area = 0.0
     for face in load_faces:
         area = triangle_area(*(nodes[node] for node in face["nodes"][:3]))
         integrated_area += area
-        # For a six-node quadratic triangle under constant traction, the
-        # consistent corner-node integrals are zero and each midside integral
-        # is one third of the triangle area.
-        for node in face["nodes"][3:]:
+        # Constant-traction consistent loads: each C3D4 triangle node receives
+        # one third of its area. For C3D10 faces, corner shape functions
+        # integrate to zero and each midside node receives one third.
+        loaded_nodes = face["nodes"] if element_type == "C3D4" else face["nodes"][3:]
+        for node in loaded_nodes:
             nodal_forces[node] = nodal_forces.get(node, 0.0) - TRACTION_PA * area / 3.0
 
     resultant_z = sum(nodal_forces.values())
@@ -162,11 +220,11 @@ def prepare_model(mesh_path: Path) -> tuple[dict, str]:
 
     lines = [
         "*HEADING",
-        "Mechanical Design Intelligence - cantilever C3D10 sanity solve",
+        f"Mechanical Design Intelligence - cantilever {element_type} sanity solve",
         "*NODE, NSET=ALLNODES",
     ]
     lines.extend(f"{node}, {x:.16g}, {y:.16g}, {z:.16g}" for node, (x, y, z) in sorted(nodes.items()))
-    lines.append("*ELEMENT, TYPE=C3D10, ELSET=BEAM")
+    lines.append(f"*ELEMENT, TYPE={element_type}, ELSET=BEAM")
     lines.extend(f"{item['id']}, " + ", ".join(map(str, item["nodes"])) for item in volumes)
     lines.append("*NSET, NSET=FIXED")
     lines.extend(wrapped_ids(fixed_nodes))
@@ -210,7 +268,7 @@ def prepare_model(mesh_path: Path) -> tuple[dict, str]:
     )
     model = {
         "node_count": len(nodes),
-        "volume_element_type": "C3D10",
+        "volume_element_type": element_type,
         "volume_element_count": len(volumes),
         "fixed_face_element_count": len(fixed_faces),
         "fixed_node_count": len(fixed_nodes),
@@ -219,7 +277,7 @@ def prepare_model(mesh_path: Path) -> tuple[dict, str]:
         "load_face_area_m2": integrated_area,
         "traction_pa": [0.0, 0.0, -TRACTION_PA],
         "integrated_resultant_n": [0.0, 0.0, resultant_z],
-        "calculix_load_representation": "consistent C3D10-face nodal loads",
+        "calculix_load_representation": f"consistent {element_type}-face nodal loads",
     }
     return model, "\n".join(lines)
 
@@ -289,6 +347,7 @@ def main() -> int:
     args = parse_args()
     output_dir = args.output_dir.resolve()
     mesh_path = output_dir / "cantilever.msh"
+    mesh_summary_path = output_dir / "cantilever_mesh_summary.json"
     if not mesh_path.is_file():
         print(f"error: mesh not found; run generate_cantilever_mesh.py first: {mesh_path}", file=sys.stderr)
         return 1
@@ -302,8 +361,12 @@ def main() -> int:
     for path in output_dir.glob(f"{job_name}.*"):
         path.unlink()
     try:
+        mesh_summary = json.loads(mesh_summary_path.read_text(encoding="utf-8"))
+        element_type = mesh_summary["mesh"]["volume_element_type"]
+        if element_type not in MESH_ELEMENT_TYPES:
+            raise SolveError(f"Unsupported mesh element type: {element_type}")
         nodes, _ = read_msh(mesh_path)
-        model, deck = prepare_model(mesh_path)
+        model, deck = prepare_model(mesh_path, element_type)
         deck_path.write_text(deck, encoding="ascii")
         result = subprocess.run(
             [ccx, "-i", job_name],

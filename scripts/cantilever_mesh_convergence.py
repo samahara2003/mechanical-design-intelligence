@@ -86,9 +86,93 @@ def print_table(results: list[dict]) -> None:
         )
 
 
+def run_level(
+    repository: Path,
+    output_dir: Path,
+    level: str,
+    mesh_size_m: float,
+    element_type: str,
+) -> dict:
+    scripts = repository / "scripts"
+    level_started = time.perf_counter()
+    mesh, mesh_runtime = run_json(
+        [
+            sys.executable,
+            str(scripts / "generate_cantilever_mesh.py"),
+            "--output-dir",
+            str(output_dir),
+            "--mesh-size",
+            repr(mesh_size_m),
+            "--element-type",
+            element_type,
+        ],
+        repository,
+    )
+    solve, solve_runtime = run_json(
+        [
+            sys.executable,
+            str(scripts / "run_cantilever_solve.py"),
+            "--output-dir",
+            str(output_dir),
+        ],
+        repository,
+    )
+    verification, verification_runtime = run_json(
+        [
+            sys.executable,
+            str(scripts / "cantilever_verification.py"),
+            "--output-dir",
+            str(output_dir),
+        ],
+        repository,
+    )
+    warnings = solve["sanity"]["solver_warnings"]
+    if warnings:
+        raise ConvergenceError(f"CalculiX warnings for {element_type} {level}: {warnings}")
+    if mesh["mesh"]["volume_element_type"] != element_type:
+        raise ConvergenceError(f"Requested {element_type} but mesh reports a different formulation")
+    if solve["model"]["integrated_resultant_n"][2] >= 0.0:
+        raise ConvergenceError(f"Applied load has the wrong sign for {element_type} {level}")
+    if not solve["sanity"]["reaction_balances_applied_z_load"]:
+        raise ConvergenceError(f"Support reaction does not balance the load for {element_type} {level}")
+    if not verification["comparison"]["fea_sign_is_negative_z"]:
+        raise ConvergenceError(f"Centroid displacement has the wrong sign for {element_type} {level}")
+
+    return {
+        "formulation": element_type,
+        "level": level,
+        "mesh_size_m": mesh_size_m,
+        "node_count": mesh["mesh"]["node_count"],
+        "volume_element_type": mesh["mesh"]["volume_element_type"],
+        "volume_element_count": mesh["mesh"]["volume_element_count"],
+        "fixed_face_element_count": solve["model"]["fixed_face_element_count"],
+        "load_face_element_count": solve["model"]["load_face_element_count"],
+        "centroid_uz_m": verification["fea"]["tip_uz_m"],
+        "centroid_displacement_magnitude_m": abs(verification["fea"]["tip_uz_m"]),
+        "analytical_displacement_magnitude_m": verification["analytical"][
+            "tip_displacement_magnitude_m"
+        ],
+        "absolute_analytical_difference_m": verification["comparison"]["absolute_error_m"],
+        "relative_analytical_error": verification["comparison"]["relative_error"],
+        "percent_analytical_error": verification["comparison"]["percent_error"],
+        "integrated_resultant_n": solve["model"]["integrated_resultant_n"],
+        "fixed_reaction_n": solve["sanity"]["fixed_reaction_n"],
+        "interpolation": verification["fea"]["selection"],
+        "runtimes_seconds": {
+            "mesh_generation": mesh_runtime,
+            "solver": solve_runtime,
+            "verification": verification_runtime,
+            "total": time.perf_counter() - level_started,
+        },
+        "gmsh_version": mesh["gmsh_version"],
+        "calculix_version": verification["provenance"]["calculix_version"],
+        "provenance": verification["provenance"],
+        "solver_warnings": warnings,
+    }
+
+
 def main() -> int:
     repository = Path(__file__).resolve().parents[1]
-    scripts = repository / "scripts"
     study_root = repository / "artifacts" / "cantilever" / "convergence"
     study_path = repository / "artifacts" / "cantilever" / "cantilever_mesh_convergence.json"
     raw_results = []
@@ -96,79 +180,8 @@ def main() -> int:
     try:
         for level, mesh_size_m in LEVELS:
             output_dir = study_root / level
-            level_started = time.perf_counter()
-            mesh, mesh_runtime = run_json(
-                [
-                    sys.executable,
-                    str(scripts / "generate_cantilever_mesh.py"),
-                    "--output-dir",
-                    str(output_dir),
-                    "--mesh-size",
-                    repr(mesh_size_m),
-                ],
-                repository,
-            )
-            solve, solve_runtime = run_json(
-                [
-                    sys.executable,
-                    str(scripts / "run_cantilever_solve.py"),
-                    "--output-dir",
-                    str(output_dir),
-                ],
-                repository,
-            )
-            verification, verification_runtime = run_json(
-                [
-                    sys.executable,
-                    str(scripts / "cantilever_verification.py"),
-                    "--output-dir",
-                    str(output_dir),
-                ],
-                repository,
-            )
-            warnings = solve["sanity"]["solver_warnings"]
-            if warnings:
-                raise ConvergenceError(f"CalculiX warnings at {level}: {warnings}")
-            if solve["model"]["integrated_resultant_n"][2] >= 0.0:
-                raise ConvergenceError(f"Applied load has the wrong sign at {level}")
-            if not solve["sanity"]["reaction_balances_applied_z_load"]:
-                raise ConvergenceError(f"Support reaction does not balance the load at {level}")
-            if not verification["comparison"]["fea_sign_is_negative_z"]:
-                raise ConvergenceError(f"Centroid displacement has the wrong sign at {level}")
-
             raw_results.append(
-                {
-                    "level": level,
-                    "mesh_size_m": mesh_size_m,
-                    "node_count": mesh["mesh"]["node_count"],
-                    "volume_element_type": mesh["mesh"]["volume_element_type"],
-                    "volume_element_count": mesh["mesh"]["volume_element_count"],
-                    "fixed_face_element_count": solve["model"]["fixed_face_element_count"],
-                    "load_face_element_count": solve["model"]["load_face_element_count"],
-                    "centroid_uz_m": verification["fea"]["tip_uz_m"],
-                    "centroid_displacement_magnitude_m": abs(verification["fea"]["tip_uz_m"]),
-                    "analytical_displacement_magnitude_m": verification["analytical"][
-                        "tip_displacement_magnitude_m"
-                    ],
-                    "absolute_analytical_difference_m": verification["comparison"][
-                        "absolute_error_m"
-                    ],
-                    "relative_analytical_error": verification["comparison"]["relative_error"],
-                    "percent_analytical_error": verification["comparison"]["percent_error"],
-                    "integrated_resultant_n": solve["model"]["integrated_resultant_n"],
-                    "fixed_reaction_n": solve["sanity"]["fixed_reaction_n"],
-                    "interpolation": verification["fea"]["selection"],
-                    "runtimes_seconds": {
-                        "mesh_generation": mesh_runtime,
-                        "solver": solve_runtime,
-                        "verification": verification_runtime,
-                        "total": time.perf_counter() - level_started,
-                    },
-                    "gmsh_version": mesh["gmsh_version"],
-                    "calculix_version": verification["provenance"]["calculix_version"],
-                    "provenance": verification["provenance"],
-                    "solver_warnings": warnings,
-                }
+                run_level(repository, output_dir, level, mesh_size_m, "C3D10")
             )
 
         results = add_successive_changes(raw_results)

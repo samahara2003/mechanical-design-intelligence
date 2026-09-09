@@ -28,6 +28,11 @@ ELEMENT_TYPE_NAMES = {
     15: "1-node point",
 }
 
+ELEMENT_TYPES = {
+    "C3D4": {"order": 1, "gmsh_volume_type": 4, "gmsh_surface_type": 2},
+    "C3D10": {"order": 2, "gmsh_volume_type": 11, "gmsh_surface_type": 9},
+}
+
 
 class SpikeError(RuntimeError):
     """Raised when an engineering-spike prerequisite or invariant fails."""
@@ -70,7 +75,12 @@ Save "{gmsh_path(step_path)}";
 
 
 def write_mesh_script(
-    path: Path, step_path: Path, msh_path: Path, inp_path: Path, mesh_size_m: float
+    path: Path,
+    step_path: Path,
+    msh_path: Path,
+    inp_path: Path,
+    mesh_size_m: float,
+    element_order: int,
 ) -> None:
     path.write_text(
         f'''// Import the STEP boundary and create semantic FEA groups. Generated; do not edit.
@@ -101,7 +111,7 @@ Physical Surface("load", 3) = {{load[]}};
 Mesh.MeshSizeMin = {mesh_size_m};
 Mesh.MeshSizeMax = {mesh_size_m};
 Mesh.Algorithm3D = 1;
-Mesh.ElementOrder = 2;
+Mesh.ElementOrder = {element_order};
 Mesh.MshFileVersion = 2.2;
 Mesh.Binary = 0;
 Mesh 3;
@@ -124,7 +134,7 @@ def parse_geometry_counts(output: str) -> dict[str, int]:
     return dict(zip(("volumes", "surfaces", "fixed", "load"), map(int, match.groups())))
 
 
-def parse_msh(path: Path) -> dict[str, object]:
+def parse_msh(path: Path, element_type: str) -> dict[str, object]:
     lines = path.read_text(encoding="utf-8").splitlines()
 
     def section_count(section: str) -> int:
@@ -142,8 +152,8 @@ def parse_msh(path: Path) -> dict[str, object]:
         fields = line.split()
         if len(fields) < 3:
             raise SpikeError(f"Malformed element record in {path}: {line}")
-        element_type = int(fields[1])
-        type_counts[element_type] = type_counts.get(element_type, 0) + 1
+        gmsh_element_type = int(fields[1])
+        type_counts[gmsh_element_type] = type_counts.get(gmsh_element_type, 0) + 1
 
     physical_names: dict[str, dict[str, int]] = {}
     if "$PhysicalNames" in lines:
@@ -166,15 +176,21 @@ def parse_msh(path: Path) -> dict[str, object]:
             f"Unexpected physical groups in {path}: {physical_names}; expected {expected_groups}"
         )
 
-    tetrahedron_count = type_counts.get(11, 0)
+    configuration = ELEMENT_TYPES[element_type]
+    tetrahedron_count = type_counts.get(configuration["gmsh_volume_type"], 0)
     if tetrahedron_count == 0:
-        raise SpikeError(f"No 10-node second-order tetrahedral elements were found in {path}")
+        raise SpikeError(f"No {element_type} tetrahedral elements were found in {path}")
+    unexpected_tetrahedron_type = 4 if configuration["gmsh_volume_type"] == 11 else 11
+    if type_counts.get(unexpected_tetrahedron_type, 0):
+        raise SpikeError(f"Mesh contains tetrahedra inconsistent with requested {element_type}")
+    if type_counts.get(configuration["gmsh_surface_type"], 0) == 0:
+        raise SpikeError(f"Mesh contains no boundary triangles for requested {element_type}")
 
     return {
         "node_count": node_count,
         "element_count": element_count,
         "volume_element_count": tetrahedron_count,
-        "volume_element_type": "C3D10",
+        "volume_element_type": element_type,
         "element_types": [
             {
                 "gmsh_type": element_type,
@@ -194,6 +210,12 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         default=Path("artifacts/cantilever"),
         help="artifact directory (default: artifacts/cantilever)",
+    )
+    parser.add_argument(
+        "--element-type",
+        choices=tuple(ELEMENT_TYPES),
+        default="C3D10",
+        help="CalculiX tetrahedral formulation (default: C3D10)",
     )
     parser.add_argument(
         "--mesh-size",
@@ -243,10 +265,17 @@ def main() -> int:
         if not step_path.is_file() or step_path.stat().st_size == 0:
             raise SpikeError(f"STEP fixture was not created: {step_path}")
 
-        write_mesh_script(mesh_script, step_path, msh_path, inp_path, args.mesh_size)
+        write_mesh_script(
+            mesh_script,
+            step_path,
+            msh_path,
+            inp_path,
+            args.mesh_size,
+            ELEMENT_TYPES[args.element_type]["order"],
+        )
         mesh_output = run_gmsh(gmsh, mesh_script)
         geometry = parse_geometry_counts(mesh_output)
-        mesh = parse_msh(msh_path)
+        mesh = parse_msh(msh_path, args.element_type)
         if not inp_path.is_file() or inp_path.stat().st_size == 0:
             raise SpikeError(f"CalculiX-compatible mesh was not created: {inp_path}")
     except (OSError, subprocess.TimeoutExpired, SpikeError) as error:
