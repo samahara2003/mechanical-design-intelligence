@@ -10,6 +10,12 @@ import subprocess
 import sys
 from pathlib import Path
 
+from axial_bar_definition import (
+    AXIAL_BAR_VOLUME,
+    AXIAL_FIXED_FACE,
+    AXIAL_LOAD_FACE,
+    AXIAL_MESH_SIZE_M,
+)
 from generate_cantilever_mesh import (
     BOUNDING_BOX_TOLERANCE_M,
     ELEMENT_TYPES,
@@ -25,11 +31,11 @@ from generate_cantilever_mesh import (
 LENGTH_M = 1.0
 WIDTH_M = 0.05
 HEIGHT_M = 0.05
-MESH_SIZE_M = 0.0125
+MESH_SIZE_M = AXIAL_MESH_SIZE_M
 PHYSICAL_GROUPS = {
-    "axial_bar": {"dimension": 3, "tag": 1},
-    "fixed": {"dimension": 2, "tag": 2},
-    "axial_load": {"dimension": 2, "tag": 3},
+    AXIAL_BAR_VOLUME.region_name: {"dimension": 3, "tag": 1},
+    AXIAL_FIXED_FACE.region_name: {"dimension": 2, "tag": 2},
+    AXIAL_LOAD_FACE.region_name: {"dimension": 2, "tag": 3},
 }
 
 
@@ -68,9 +74,9 @@ If (#axialLoad[] != 1)
   Error("Expected exactly one axial-load face at x=1 m");
 EndIf
 
-Physical Volume("axial_bar", 1) = {{volumes[]}};
-Physical Surface("fixed", 2) = {{fixed[]}};
-Physical Surface("axial_load", 3) = {{axialLoad[]}};
+Physical Volume("{AXIAL_BAR_VOLUME.region_name}", 1) = {{volumes[]}};
+Physical Surface("{AXIAL_FIXED_FACE.region_name}", 2) = {{fixed[]}};
+Physical Surface("{AXIAL_LOAD_FACE.region_name}", 3) = {{axialLoad[]}};
 
 Mesh.MeshSizeMin = {MESH_SIZE_M};
 Mesh.MeshSizeMax = {MESH_SIZE_M};

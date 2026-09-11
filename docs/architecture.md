@@ -42,6 +42,29 @@ STEP remains the actual CAD input boundary. The cantilever benchmark STEP file m
 
 The first solve milestone extends this local flow with a second standard-library Python process that prepares a minimal CalculiX deck and invokes `ccx` from `PATH` through `subprocess`. This is spike orchestration, not a production result parser or job-execution architecture. The deck is derived from the Gmsh physical groups rather than arbitrary geometry entity identifiers.
 
+### Engineering domain boundary
+
+The first Engineering Core slice introduces small immutable Python value objects that separate four concerns:
+
+1. engineering intent: model-version reference, material snapshot, geometry-targeted loads, and geometry-targeted boundary conditions;
+2. resolved numerical configuration: the actual mesh size, element formulation, mesher/version, solver/version, linear-static setting, and result requests;
+3. solver representation: physical tags, mesh node and element sets, CalculiX DOF numbers, equivalent nodal loads, input keywords, and output-file syntax; and
+4. deterministic results and runtime provenance.
+
+Only the first concern and the minimum reproducible part of the second are modeled here. This is not a general solver execution framework, persistence model, draft workflow, or state machine.
+
+An `AnalysisDefinition` is a frozen executed-analysis value containing a `ModelVersionReference`, `MaterialSnapshot`, force or pressure intent, boundary conditions, `MeshConfig`, `SolverConfig`, and optional required factor of safety. Its nested collections are tuples and its nested values are themselves frozen. Mutable draft state is an application-layer concern intentionally deferred. Once execution begins, an engineering change requires a new definition and, when persistence exists, a new Analysis.
+
+Material properties are copied into `MaterialSnapshot`; an executed analysis therefore does not depend only on a mutable library key. Current fields are name, Young's modulus, Poisson ratio, optional density, optional yield strength, and an optional immutable source reference. Values use SI units: Pa, N, m, and kg/m^3 as indicated by field names. A full units library is not introduced.
+
+`GeometrySelection` currently identifies a named face or volume region such as `fixed`, `load`, `axial_load`, or `axial_bar`. Loads and constraints refer to this geometry-level intent, never mesh node IDs. Gmsh/CalculiX adapters remain responsible for resolving names into physical tags, faces, nodes, elements, and solver DOFs. Named regions are not robust CAD topological naming: upstream fixture/import logic must still create and validate them, and topology tracking across arbitrary CAD revisions remains deferred.
+
+A force is represented as a positive magnitude in newtons plus a normalized three-component direction and a target face. This keeps engineering intent distinct from the benchmark-specific consistent nodal-force integration. Pressure is a positive magnitude in pascals plus an explicit inward/outward selected-face normal convention. Torque is not yet a production load type: the square-bar benchmark's distributed resultant-equivalent traction remains benchmark-specific evidence until a production torque requirement and mapping semantics are defined.
+
+Resolved `MeshConfig` currently supports the verified C3D10 path and records its derived quadratic order, characteristic size, and Gmsh/OpenCASCADE version. `SolverConfig` records CalculiX version, linear-static analysis, small-deformation behavior, and requested result quantities. CAD, generated mesh, solver input, result and artifact checksums, runtime, and worker/environment details remain runtime/result provenance rather than engineering definition fields.
+
+The axial bar is the sole initial consumer because its uniform force, fully fixed face, material, and C3D10 configuration have the least ambiguous mapping. Its geometry generation, consistent surface-load mapping, CalculiX execution, parsing, and analytical verification remain benchmark-specific. Cantilever and torsion migration is intentionally deferred.
+
 ### Spike constraints
 
 The spike does not include a web UI, API product surface, database, authentication, cloud deployment, durable queue, SSE, AI review, distributed execution, production infrastructure, or DFM functionality. It must not introduce a custom finite element solver or speculative infrastructure.

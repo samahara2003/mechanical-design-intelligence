@@ -11,7 +11,9 @@ import subprocess
 import sys
 from pathlib import Path
 
+from axial_bar_definition import AXIAL_FIXED_BOUNDARY, AXIAL_FORCE, AXIAL_MATERIAL
 from cantilever_verification import VerificationError, read_displacements
+from engineering_domain import TranslationalDof
 from run_cantilever_solve import (
     SolveError,
     as_calculix_c3d10,
@@ -22,10 +24,10 @@ from run_cantilever_solve import (
 )
 
 
-YOUNGS_MODULUS_PA = 200.0e9
-POISSONS_RATIO = 0.30
+YOUNGS_MODULUS_PA = AXIAL_MATERIAL.youngs_modulus_pa
+POISSONS_RATIO = AXIAL_MATERIAL.poissons_ratio
 AREA_M2 = 0.0025
-RESULTANT_FORCE_N = 1000.0
+RESULTANT_FORCE_N = AXIAL_FORCE.magnitude_n
 TRACTION_PA = RESULTANT_FORCE_N / AREA_M2
 COORDINATE_TOLERANCE_M = 1.0e-8
 
@@ -95,7 +97,9 @@ def prepare_model(mesh_path: Path) -> tuple[dict, str]:
         raise SolveError("Axial-load node set contains a node away from x=1")
     mapped_surface = map_surface_faces(load_faces, volumes, "C3D10")
     nodal_loads, area = consistent_quadratic_face_loads(
-        load_faces, nodes, (TRACTION_PA, 0.0, 0.0)
+        load_faces,
+        nodes,
+        tuple(TRACTION_PA * component for component in AXIAL_FORCE.direction),
     )
     resultant = tuple(sum(vector[axis] for vector in nodal_loads.values()) for axis in range(3))
     if not math.isclose(area, AREA_M2, rel_tol=1.0e-10, abs_tol=1.0e-12):
@@ -105,6 +109,17 @@ def prepare_model(mesh_path: Path) -> tuple[dict, str]:
         for axis in range(3)
     ):
         raise SolveError(f"Integrated load is {resultant}, expected (1000, 0, 0) N")
+
+    dof_numbers = {
+        TranslationalDof.UX: 1,
+        TranslationalDof.UY: 2,
+        TranslationalDof.UZ: 3,
+    }
+    constrained_dofs = sorted(
+        dof_numbers[dof] for dof in AXIAL_FIXED_BOUNDARY.constrained_dofs
+    )
+    if constrained_dofs != [1, 2, 3]:
+        raise SolveError("Axial benchmark requires the established UX/UY/UZ fixed support")
 
     lines = [
         "*HEADING",
@@ -131,14 +146,14 @@ def prepare_model(mesh_path: Path) -> tuple[dict, str]:
     lines.extend(f"AXIAL_LOAD_{label}, {label}" for label in sorted(face_sets))
     lines.extend(
         [
-            "*MATERIAL, NAME=STEEL",
+            f"*MATERIAL, NAME={AXIAL_MATERIAL.name}",
             "*ELASTIC",
             f"{YOUNGS_MODULUS_PA:.16g}, {POISSONS_RATIO}",
-            "*SOLID SECTION, ELSET=AXIAL_BAR, MATERIAL=STEEL",
+            f"*SOLID SECTION, ELSET=AXIAL_BAR, MATERIAL={AXIAL_MATERIAL.name}",
             "*STEP",
             "*STATIC",
             "*BOUNDARY",
-            "FIXED, 1, 3, 0",
+            f"FIXED, {constrained_dofs[0]}, {constrained_dofs[-1]}, 0",
             "*CLOAD",
         ]
     )

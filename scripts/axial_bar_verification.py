@@ -11,6 +11,12 @@ import sys
 import time
 from pathlib import Path
 
+from axial_bar_definition import (
+    AXIAL_FORCE,
+    AXIAL_MATERIAL,
+    AXIAL_MESH_SIZE_M,
+    axial_bar_analysis_definition,
+)
 from cantilever_mesh_convergence import ConvergenceError, run_json
 from cantilever_stress_verification import (
     GAUSS_NATURAL_COORDINATES,
@@ -26,6 +32,7 @@ from cantilever_verification import (
     quadratic_triangle_weights,
     read_displacements,
 )
+from engineering_domain import analysis_definition_to_dict
 from run_cantilever_solve import as_calculix_c3d10, read_msh
 
 
@@ -34,10 +41,10 @@ LENGTH_M = 1.0
 WIDTH_M = 0.05
 HEIGHT_M = 0.05
 AREA_M2 = WIDTH_M * HEIGHT_M
-YOUNGS_MODULUS_PA = 200.0e9
-POISSONS_RATIO = 0.30
-FORCE_N = 1000.0
-MESH_SIZE_M = 0.0125
+YOUNGS_MODULUS_PA = AXIAL_MATERIAL.youngs_modulus_pa
+POISSONS_RATIO = AXIAL_MATERIAL.poissons_ratio
+FORCE_N = AXIAL_FORCE.magnitude_n
+MESH_SIZE_M = AXIAL_MESH_SIZE_M
 INTERIOR_X_M = 0.5
 TIP_POINT_M = (LENGTH_M, WIDTH_M / 2.0, HEIGHT_M / 2.0)
 COORDINATE_TOLERANCE_M = 1.0e-8
@@ -316,6 +323,9 @@ def main() -> int:
         version_match = re.search(r"CalculiX Version\s+([\d.]+)", solver_stdout)
         if version_match is None or "JOB FINISHED" not in solver_stdout.upper():
             raise AxialVerificationError("CalculiX version or completion marker is missing")
+        analysis_definition = axial_bar_analysis_definition(
+            mesh["gmsh_version"], version_match.group(1)
+        )
         paths = {
             "step": output_dir / "axial_bar.step",
             "mesh": mesh_path,
@@ -329,6 +339,7 @@ def main() -> int:
             "status": "axial-bar verification completed",
             "benchmark_id": BENCHMARK_ID,
             "units": "SI",
+            "analysis_definition": analysis_definition_to_dict(analysis_definition),
             "geometry_m": {"length": LENGTH_M, "width": WIDTH_M, "height": HEIGHT_M},
             "material": {
                 "model": "linear elastic isotropic",
