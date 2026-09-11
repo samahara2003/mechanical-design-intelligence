@@ -17,6 +17,11 @@ from axial_bar_definition import (
     AXIAL_MESH_SIZE_M,
     axial_bar_analysis_definition,
 )
+from analysis_results import (
+    ResolvedAnalysisContext,
+    analysis_result_to_dict,
+    build_analysis_result,
+)
 from cantilever_mesh_convergence import ConvergenceError, run_json
 from cantilever_stress_verification import (
     GAUSS_NATURAL_COORDINATES,
@@ -33,7 +38,7 @@ from cantilever_verification import (
 )
 from calculix_results import CalculixResultParseError, parse_calculix_dat
 from engineering_domain import analysis_definition_to_dict
-from numerical_results import NumericalResult
+from numerical_results import NumericalResult, Vector3
 from run_cantilever_solve import as_calculix_c3d10, read_msh
 
 
@@ -369,6 +374,26 @@ def main() -> int:
         analysis_definition = axial_bar_analysis_definition(
             mesh["gmsh_version"], version_match.group(1)
         )
+        analysis_result = build_analysis_result(
+            analysis_definition,
+            numerical_result,
+            ResolvedAnalysisContext(
+                node_count=mesh["mesh"]["node_count"],
+                element_count=mesh["mesh"]["volume_element_count"],
+                integrated_applied_resultant_n=Vector3(
+                    *solve["model"]["integrated_resultant_n"]
+                ),
+            ),
+            node_locations_m={
+                node_id: Vector3(*coordinates) for node_id, coordinates in nodes.items()
+            },
+            integration_point_locations_m={
+                (sample["element_id"], sample["integration_point"]): Vector3(
+                    *sample["coordinates_m"]
+                )
+                for sample in all_samples
+            },
+        )
         paths = {
             "step": output_dir / "axial_bar.step",
             "mesh": mesh_path,
@@ -383,6 +408,7 @@ def main() -> int:
             "benchmark_id": BENCHMARK_ID,
             "units": "SI",
             "analysis_definition": analysis_definition_to_dict(analysis_definition),
+            "analysis_result": analysis_result_to_dict(analysis_result),
             "geometry_m": {"length": LENGTH_M, "width": WIDTH_M, "height": HEIGHT_M},
             "material": {
                 "model": "linear elastic isotropic",

@@ -107,13 +107,54 @@ Benchmark Evidence / future AnalysisResult
 
 Mesh-dependent reconstruction remains outside text parsing. The axial free-end centroid interpolation uses the existing C3D10 quadratic surface representation, and integration-point coordinates are reconstructed from the verified mesh connectivity and quadrature identity. These operations are numerical/mesh post-processing that could apply to another solver using the same representation, but they remain narrowly located in benchmark infrastructure rather than becoming a generic FEM library. Selection of the `x = 0.5 m` patch, comparison with `F/A`, strain reconstruction and Poisson references, equilibrium interpretation, and support-band diagnostics remain axial-benchmark verification.
 
-Full runtime provenance also remains separate. Existing artifacts retain CAD, mesh, input, DAT/FRD and software evidence; the numerical snapshot itself contains physical result values and numerical identities, not checksums, worker identity, timestamps, or analytical references. This is neither a final `AnalysisResult` nor a general multi-solver result framework. Cantilever and torsion continue using their established parsing paths.
+Full runtime provenance also remains separate. Existing artifacts retain CAD, mesh, input, DAT/FRD and software evidence; the numerical snapshot itself contains physical result values and numerical identities, not checksums, worker identity, timestamps, or analytical references. This is not a general multi-solver result framework. Cantilever and torsion continue using their established parsing paths.
+
+### First engineering-evidence and AnalysisResult boundary
+
+The axial benchmark now proves the complete first Engineering Core dependency chain:
+
+```text
+AnalysisDefinition
+        |
+        v
+Solver Input Adapter
+        |
+        v
+     CalculiX
+        |
+        v
+Solver Output Parser
+        |
+        v
+ NumericalResult
+        |
+        v
+Engineering Evidence Builder
+        |
+        v
+  AnalysisResult
+        |
+        v
+future UI / reports / AI review
+```
+
+`NumericalResult` remains the detailed numerical snapshot: thousands of nodal vectors and raw integration-point tensors with numerical identities. `AnalysisResult` is a compact, immutable, machine-readable summary and does not duplicate those fields. It records the model-version reference, resolved mesh counts/configuration, the global maximum-displacement diagnostic, force-equilibrium evidence, the global raw integration-point von Mises diagnostic, and objective warnings. The builder consumes `AnalysisDefinition`, `NumericalResult`, and a small solver-neutral `ResolvedAnalysisContext`; it has no dependency on CalculiX syntax or parser classes.
+
+The resolved context records actual node/element counts and the integrated applied resultant produced by the surface-load mapping. This permits equilibrium to compare the force actually transferred to the numerical model with the parsed support resultant, rather than assuming the requested load was mapped exactly. Evidence exposes `applied + reaction`, its magnitude, and a relative imbalance normalized by the larger resultant magnitude. It embeds no equilibrium tolerance or boolean decision.
+
+Maximum displacement is the exact largest parsed nodal-vector magnitude, with the original vector, node identity, and physical node location when supplied by mesh reconstruction. Exact magnitude ties select the lowest node ID. This global statistic is useful for search and reporting but does not replace a benchmark-specific geometric QoI such as the axial free-face centroid interpolation.
+
+The stress summary selects the exact largest von Mises value calculated from raw, unaveraged integration-point Cauchy tensors. It retains element/IP identity, original tensor, and reconstructed physical location when available. Exact scalar ties select the lowest element ID and then lowest integration-point identity. Its deliberately explicit name, `global_raw_max_von_mises`, identifies it as a numerical diagnostic—not `critical_stress`, relevant design stress, factor of safety, or acceptance result. No smoothing, nodal extrapolation, or averaging is introduced.
+
+The serializer emits stable JSON-compatible fields with explicit SI-unit names and no solver-file syntax. Local artifact references are deferred: paths are not durable engineering identity, while checksums and broader execution provenance already remain in the benchmark artifact. A future artifact model can link the compact result to detailed numerical fields without embedding those fields or inventing storage IDs now.
+
+Production factor of safety and pass/fail remain deferred because the relevant-stress selection policy is unresolved. In particular, the axial global peak lies in the perturbed support region and is not substituted for the predeclared interior analytical comparison. Selection of that interior region, `F/A` and strain references, free-end centroid interpolation, support diagnostics, and analytical interpretation remain benchmark-specific. Future UI, reports, persistence, regression tools, and AI review may consume `AnalysisResult`; AI remains downstream and cannot alter deterministic evidence or determine acceptance.
 
 ### Spike constraints
 
 The spike does not include a web UI, API product surface, database, authentication, cloud deployment, durable queue, SSE, AI review, distributed execution, production infrastructure, or DFM functionality. It must not introduce a custom finite element solver or speculative infrastructure.
 
-No internal package layout, command-line interface, result schema, artifact format, or process-orchestration design has yet been selected. Those choices should be made only when implementing the spike and should remain as simple as its demonstrated requirements allow.
+No production package layout, command-line interface, persistence schema, artifact-storage format, or process-orchestration design has yet been selected. Those choices should be made only when implementing the relevant milestone and should remain as simple as its demonstrated requirements allow.
 
 ## 2. Planned future system architecture
 
