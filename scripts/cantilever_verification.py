@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import math
 import re
@@ -16,6 +15,12 @@ from analysis_results import (
     analysis_result_to_dict,
     build_analysis_result,
 )
+from analysis_provenance import (
+    ProvenanceError,
+    analysis_provenance_to_dict,
+    build_analysis_provenance,
+    sha256_file,
+)
 from calculix_results import CalculixResultParseError, parse_calculix_dat
 from cantilever_definition import cantilever_analysis_definition
 from cantilever_stress_verification import enrich_integration_point_stresses
@@ -26,6 +31,7 @@ from surface_load_mapping import map_uniform_force_to_c3d10_faces
 
 
 BENCHMARK_ID = "cantilever-eb-tip-uz-v1"
+EXPECTED_SOLVER_INPUT_SHA256 = "4f4d4333f88806a8255c862380d56a95b305f1755ce4dddda25b06c2f356d6ea"
 LENGTH_M = 1.0
 WIDTH_M = 0.05
 HEIGHT_M = 0.05
@@ -212,7 +218,7 @@ def interpolate_tip_uz(
 
 
 def sha256(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+    return sha256_file(path)
 
 
 def parse_args() -> argparse.Namespace:
@@ -279,7 +285,7 @@ def main() -> int:
         if solver_match is None or "JOB FINISHED" not in solver_stdout.upper():
             raise VerificationError("Solver version or successful completion is missing from stdout")
 
-        analysis_definition = analysis_result = None
+        analysis_definition = analysis_provenance = analysis_result = None
         if element_type == "C3D10":
             analysis_definition = cantilever_analysis_definition(
                 mesh_summary["gmsh_version"],
@@ -317,6 +323,18 @@ def main() -> int:
                     )
                     for sample in enriched_stresses
                 },
+            )
+            if sha256(deck_path) != EXPECTED_SOLVER_INPUT_SHA256:
+                raise VerificationError("Cantilever solver-input SHA-256 regression detected")
+            analysis_provenance = build_analysis_provenance(
+                analysis_definition,
+                cad_step_path=output_dir / "cantilever.step",
+                mesh_path=mesh_path,
+                solver_input_path=deck_path,
+                solver_dat_path=dat_path,
+                solver_frd_path=frd_path,
+                gmsh_version=mesh_summary["gmsh_version"],
+                calculix_version=solver_match.group(1),
             )
 
         record = {
@@ -365,8 +383,13 @@ def main() -> int:
                 "stress verification is not established",
             ],
         }
-        if analysis_definition is not None and analysis_result is not None:
+        if (
+            analysis_definition is not None
+            and analysis_provenance is not None
+            and analysis_result is not None
+        ):
             record["analysis_definition"] = analysis_definition_to_dict(analysis_definition)
+            record["analysis_provenance"] = analysis_provenance_to_dict(analysis_provenance)
             record["analysis_result"] = analysis_result_to_dict(analysis_result)
             record["limitations"][-1] = (
                 "global raw stress is diagnostic; formal section-stress verification remains separate"
@@ -379,6 +402,7 @@ def main() -> int:
         json.JSONDecodeError,
         AnalysisResultBuildError,
         CalculixResultParseError,
+        ProvenanceError,
         VerificationError,
     ) as error:
         print(f"error: {error}", file=sys.stderr)

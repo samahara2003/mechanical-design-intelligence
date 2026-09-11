@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import math
 import re
@@ -16,6 +15,12 @@ from axial_bar_definition import (
     AXIAL_MATERIAL,
     AXIAL_MESH_SIZE_M,
     axial_bar_analysis_definition,
+)
+from analysis_provenance import (
+    ProvenanceError,
+    analysis_provenance_to_dict,
+    build_analysis_provenance,
+    sha256_file,
 )
 from analysis_results import (
     ResolvedAnalysisContext,
@@ -43,6 +48,7 @@ from run_cantilever_solve import as_calculix_c3d10, read_msh
 
 
 BENCHMARK_ID = "axial-bar-c3d10-v1"
+EXPECTED_SOLVER_INPUT_SHA256 = "667ee2d057709f187516107ee1e14e3534a47a9d799d0e43e6cfda98be07d5a9"
 LENGTH_M = 1.0
 WIDTH_M = 0.05
 HEIGHT_M = 0.05
@@ -289,7 +295,7 @@ def non_axial_stress_rms(samples: list[dict]) -> float:
 
 
 def sha256(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+    return sha256_file(path)
 
 
 def main() -> int:
@@ -403,11 +409,24 @@ def main() -> int:
             "solver_frd": output_dir / "axial_bar_static.frd",
             "solver_stdout": stdout_path,
         }
+        if sha256(paths["solver_input"]) != EXPECTED_SOLVER_INPUT_SHA256:
+            raise AxialVerificationError("Axial solver-input SHA-256 regression detected")
+        analysis_provenance = build_analysis_provenance(
+            analysis_definition,
+            cad_step_path=paths["step"],
+            mesh_path=paths["mesh"],
+            solver_input_path=paths["solver_input"],
+            solver_dat_path=paths["solver_dat"],
+            solver_frd_path=paths["solver_frd"],
+            gmsh_version=mesh["gmsh_version"],
+            calculix_version=version_match.group(1),
+        )
         artifact = {
             "status": "axial-bar verification completed",
             "benchmark_id": BENCHMARK_ID,
             "units": "SI",
             "analysis_definition": analysis_definition_to_dict(analysis_definition),
+            "analysis_provenance": analysis_provenance_to_dict(analysis_provenance),
             "analysis_result": analysis_result_to_dict(analysis_result),
             "geometry_m": {"length": LENGTH_M, "width": WIDTH_M, "height": HEIGHT_M},
             "material": {
@@ -499,6 +518,7 @@ def main() -> int:
         AxialVerificationError,
         CalculixResultParseError,
         ConvergenceError,
+        ProvenanceError,
         VerificationError,
     ) as error:
         print(f"error: {error}", file=sys.stderr)

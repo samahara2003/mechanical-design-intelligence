@@ -61,7 +61,7 @@ Material properties are copied into `MaterialSnapshot`; an executed analysis the
 
 A force is represented as a positive magnitude in newtons plus a normalized three-component direction and a target face. This keeps engineering intent distinct from the benchmark-specific consistent nodal-force integration. Pressure is a positive magnitude in pascals plus an explicit inward/outward selected-face normal convention. Torque is not yet a production load type: the square-bar benchmark's distributed resultant-equivalent traction remains benchmark-specific evidence until a production torque requirement and mapping semantics are defined.
 
-Resolved `MeshConfig` currently supports the verified C3D10 path and records its derived quadratic order, characteristic size, and Gmsh/OpenCASCADE version. `SolverConfig` records CalculiX version, linear-static analysis, small-deformation behavior, and requested result quantities. CAD, generated mesh, solver input, result and artifact checksums, runtime, and worker/environment details remain runtime/result provenance rather than engineering definition fields.
+Resolved `MeshConfig` currently supports the verified C3D10 path and records its derived quadratic order, characteristic size, and Gmsh/OpenCASCADE version. `SolverConfig` records CalculiX version, linear-static analysis, small-deformation behavior, and requested result quantities. CAD, generated mesh, solver input, result and artifact checksums remain execution provenance rather than engineering definition fields. Runtime duration and broader worker/environment details are still deferred.
 
 The axial bar was the initial consumer because its uniform force, fully fixed face, material, and C3D10 configuration had the least ambiguous mapping. The C3D10 cantilever is now the second consumer, using the same domain, mapping, adapter, parser, numerical-result, and evidence boundaries for a transverse force and bending-dominated response. Geometry generation and analytical verification remain benchmark-specific. Torsion migration is intentionally deferred.
 
@@ -107,7 +107,23 @@ Benchmark Evidence / future AnalysisResult
 
 Mesh-dependent reconstruction remains outside text parsing. The axial free-end centroid interpolation uses the existing C3D10 quadratic surface representation, and integration-point coordinates are reconstructed from the verified mesh connectivity and quadrature identity. These operations are numerical/mesh post-processing that could apply to another solver using the same representation, but they remain narrowly located in benchmark infrastructure rather than becoming a generic FEM library. Selection of the `x = 0.5 m` patch, comparison with `F/A`, strain reconstruction and Poisson references, equilibrium interpretation, and support-band diagnostics remain axial-benchmark verification.
 
-Full runtime provenance also remains separate. Existing artifacts retain CAD, mesh, input, DAT/FRD and software evidence; the numerical snapshot itself contains physical result values and numerical identities, not checksums, worker identity, timestamps, or analytical references. This is not a general multi-solver result framework. Torsion continues using its established parsing path.
+Execution provenance remains separate from the numerical snapshot. `AnalysisProvenance` retains CAD, mesh, input, DAT/FRD content identities and actual Gmsh/CalculiX versions; `NumericalResult` contains physical result values and numerical identities, not checksums, worker identity, timestamps, or analytical references. This is not a general multi-solver result framework. Torsion continues using its established parsing path.
+
+### Analysis execution provenance
+
+The axial and fine C3D10 cantilever executions now preserve this relationship:
+
+```text
+AnalysisDefinition -> AnalysisProvenance + NumericalResult -> AnalysisResult
+```
+
+`analysis_provenance.py` fingerprints the complete existing `AnalysisDefinition` serializer as canonical JSON: keys are sorted, separators contain no insignificant whitespace, text is UTF-8, and SHA-256 supplies the stable identity. It does not use Python `hash()` or object representations. A material, load, boundary-condition, mesh, solver, or model-version change therefore changes the definition fingerprint.
+
+`ArtifactProvenance` supports only the five artifacts proven here: STEP, mesh, CalculiX input, DAT, and FRD. Each record carries its artifact role, streaming SHA-256, optional byte size, and optional local path. The checksum identifies exact bytes. A local path is debug/execution metadata, is excluded from value equality, and can be omitted from the serialized content-identity view; it is not a durable storage identity. This is intentionally not a generic artifact framework.
+
+`AnalysisProvenance` links the model-version reference and definition fingerprint to those artifacts, actual Gmsh and CalculiX versions, and the stable `engineering-core-analysis-result/1` deterministic post-processing contract. OpenCASCADE version is not separately asserted because the current execution path does not capture it as an independent reliable tool fact. Git state, commit identity, timestamps, storage IDs, and worker details are not runtime requirements.
+
+Execution history is append-only in concept even though persistence is not implemented. A rerun under a changed solver/mesher version or configuration creates new execution provenance and does not rewrite the earlier engineering history. Byte reproducibility is stricter than numerical reproducibility: timestamp-bearing STEP or FRD files may have different checksums while producing the same mesh and parsed numerical evidence. Such differences are recorded, not normalized away.
 
 ### First engineering-evidence and AnalysisResult boundary
 
@@ -146,7 +162,7 @@ Maximum displacement is the exact largest parsed nodal-vector magnitude, with th
 
 The stress summary selects the exact largest von Mises value calculated from raw, unaveraged integration-point Cauchy tensors. It retains element/IP identity, original tensor, and reconstructed physical location when available. Exact scalar ties select the lowest element ID and then lowest integration-point identity. Its deliberately explicit name, `global_raw_max_von_mises`, identifies it as a numerical diagnostic—not `critical_stress`, relevant design stress, factor of safety, or acceptance result. No smoothing, nodal extrapolation, or averaging is introduced.
 
-The serializer emits stable JSON-compatible fields with explicit SI-unit names and no solver-file syntax. Local artifact references are deferred: paths are not durable engineering identity, while checksums and broader execution provenance already remain in the benchmark artifact. A future artifact model can link the compact result to detailed numerical fields without embedding those fields or inventing storage IDs now.
+The result serializer emits stable JSON-compatible fields with explicit SI-unit names and no solver-file syntax. `AnalysisProvenance` links the compact result's execution to exact artifacts without embedding raw numerical fields or inventing storage IDs. Local paths may aid debugging but are not durable engineering identity.
 
 Production factor of safety and pass/fail remain deferred because the relevant-stress selection policy is unresolved. In both current consumers, the global peak lies in the perturbed support region. It is not substituted for the axial interior analytical comparison or the cantilever's predeclared `x = 0.2 m` reconstructed beam-stress QoI. Axial `F/A`/strain references and cantilever Euler-Bernoulli displacement/section reconstruction remain benchmark-specific. Future UI, reports, persistence, regression tools, and AI review may consume `AnalysisResult`; AI remains downstream and cannot alter deterministic evidence or determine acceptance.
 
