@@ -10,7 +10,19 @@ import re
 import sys
 from pathlib import Path
 
+from analysis_results import (
+    AnalysisResultBuildError,
+    ResolvedAnalysisContext,
+    analysis_result_to_dict,
+    build_analysis_result,
+)
+from calculix_results import CalculixResultParseError, parse_calculix_dat
+from cantilever_definition import cantilever_analysis_definition
+from cantilever_stress_verification import enrich_integration_point_stresses
+from engineering_domain import analysis_definition_to_dict
+from numerical_results import Vector3
 from run_cantilever_solve import read_msh
+from surface_load_mapping import map_uniform_force_to_c3d10_faces
 
 
 BENCHMARK_ID = "cantilever-eb-tip-uz-v1"
@@ -21,6 +33,7 @@ YOUNGS_MODULUS_PA = 200.0e9
 POISSONS_RATIO = 0.30
 RESULTANT_FORCE_N = 1000.0
 TRACTION_PA = 400000.0
+AREA_M2 = 0.0025
 TIP_POINT_M = (LENGTH_M, WIDTH_M / 2.0, HEIGHT_M / 2.0)
 COORDINATE_TOLERANCE_M = 1.0e-8
 BARYCENTRIC_TOLERANCE = 1.0e-10
@@ -245,7 +258,8 @@ def main() -> int:
         ]
         if not load_faces:
             raise VerificationError(f"No load-face elements were found for {element_type}")
-        displacements = read_displacements(dat_path)
+        numerical_result = parse_calculix_dat(dat_path)
+        displacements = numerical_result.displacement_tuples_by_node()
         fea_uz_m, selection = interpolate_tip_uz(nodes, load_faces, displacements)
 
         second_moment_m4 = rectangular_second_moment(WIDTH_M, HEIGHT_M)
@@ -264,6 +278,46 @@ def main() -> int:
         solver_match = re.search(r"CalculiX Version\s+([\d.]+)", solver_stdout)
         if solver_match is None or "JOB FINISHED" not in solver_stdout.upper():
             raise VerificationError("Solver version or successful completion is missing from stdout")
+
+        analysis_definition = analysis_result = None
+        if element_type == "C3D10":
+            analysis_definition = cantilever_analysis_definition(
+                mesh_summary["gmsh_version"],
+                solver_match.group(1),
+                mesh_summary["mesh_size_m"],
+            )
+            mapped_nodal_forces, integrated_area, _ = map_uniform_force_to_c3d10_faces(
+                analysis_definition.loads[0], load_faces, nodes, AREA_M2
+            )
+            if not math.isclose(integrated_area, AREA_M2, rel_tol=1.0e-10, abs_tol=1.0e-12):
+                raise VerificationError("Reusable force mapping did not recover the loaded area")
+            mapped_applied_resultant = Vector3(
+                *(
+                    sum(vector[axis] for vector in mapped_nodal_forces.values())
+                    for axis in range(3)
+                )
+            )
+            enriched_stresses, _, _ = enrich_integration_point_stresses(
+                mesh_path, numerical_result
+            )
+            analysis_result = build_analysis_result(
+                analysis_definition,
+                numerical_result,
+                ResolvedAnalysisContext(
+                    node_count=mesh_summary["mesh"]["node_count"],
+                    element_count=mesh_summary["mesh"]["volume_element_count"],
+                    integrated_applied_resultant_n=mapped_applied_resultant,
+                ),
+                node_locations_m={
+                    node_id: Vector3(*coordinates) for node_id, coordinates in nodes.items()
+                },
+                integration_point_locations_m={
+                    (sample["element_id"], sample["integration_point"]): Vector3(
+                        *sample["coordinates_m"]
+                    )
+                    for sample in enriched_stresses
+                },
+            )
 
         record = {
             "status": "comparison completed",
@@ -311,8 +365,22 @@ def main() -> int:
                 "stress verification is not established",
             ],
         }
+        if analysis_definition is not None and analysis_result is not None:
+            record["analysis_definition"] = analysis_definition_to_dict(analysis_definition)
+            record["analysis_result"] = analysis_result_to_dict(analysis_result)
+            record["limitations"][-1] = (
+                "global raw stress is diagnostic; formal section-stress verification remains separate"
+            )
         record_path.write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
-    except (OSError, ValueError, KeyError, json.JSONDecodeError, VerificationError) as error:
+    except (
+        OSError,
+        ValueError,
+        KeyError,
+        json.JSONDecodeError,
+        AnalysisResultBuildError,
+        CalculixResultParseError,
+        VerificationError,
+    ) as error:
         print(f"error: {error}", file=sys.stderr)
         return 1
 

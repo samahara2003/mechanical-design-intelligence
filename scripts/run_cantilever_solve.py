@@ -11,10 +11,28 @@ import subprocess
 import sys
 from pathlib import Path
 
+from calculix_adapter import (
+    CalculixAdapterError,
+    render_c3d10_linear_static_deck,
+    translate_boundary_condition,
+    translate_nodal_force_representation,
+)
+from calculix_results import CalculixResultParseError, parse_calculix_dat
+from cantilever_definition import (
+    CANTILEVER_FIXED_FACE,
+    CANTILEVER_FORCE,
+    CANTILEVER_LOAD_FACE,
+    CANTILEVER_MATERIAL,
+    CANTILEVER_VOLUME,
+    cantilever_analysis_definition,
+)
+from engineering_domain import AnalysisDefinition, GeometrySelection
+from engineering_postprocessing import vector_magnitude
+from surface_load_mapping import map_uniform_force_to_c3d10_faces
 
-YOUNGS_MODULUS_PA = 200.0e9
-POISSONS_RATIO = 0.30
-RESULTANT_FORCE_N = 1000.0
+YOUNGS_MODULUS_PA = CANTILEVER_MATERIAL.youngs_modulus_pa
+POISSONS_RATIO = CANTILEVER_MATERIAL.poissons_ratio
+RESULTANT_FORCE_N = CANTILEVER_FORCE.magnitude_n
 TRACTION_PA = 400000.0
 AREA_M2 = 0.0025
 COORDINATE_TOLERANCE_M = 1.0e-8
@@ -40,6 +58,11 @@ MESH_ELEMENT_TYPES = {
     "C3D4": {"volume": 4, "surface": 2, "nodes": 4},
     "C3D10": {"volume": 11, "surface": 9, "nodes": 10},
 }
+CANTILEVER_PHYSICAL_TAG_BY_SELECTION = {
+    CANTILEVER_VOLUME: 1,
+    CANTILEVER_FIXED_FACE: 2,
+    CANTILEVER_LOAD_FACE: 3,
+}
 
 
 def as_calculix_c3d10(element: dict) -> dict:
@@ -59,6 +82,26 @@ def as_calculix_c3d4(element: dict) -> dict:
 
 class SolveError(RuntimeError):
     """Raised when solve preparation or execution is not trustworthy."""
+
+
+def resolve_mesh_elements(
+    selection: GeometrySelection,
+    msh_element_type: int,
+    elements: list[dict],
+) -> list[dict]:
+    """Resolve a cantilever named geometry selection through its physical tag."""
+    try:
+        physical_tag = CANTILEVER_PHYSICAL_TAG_BY_SELECTION[selection]
+    except KeyError as error:
+        raise SolveError(f"No cantilever mesh resolution exists for {selection}") from error
+    resolved = [
+        element
+        for element in elements
+        if element["type"] == msh_element_type and element["physical_tag"] == physical_tag
+    ]
+    if not resolved:
+        raise SolveError(f"Geometry selection {selection.region_name!r} resolved to no entities")
+    return resolved
 
 
 def read_msh(path: Path) -> tuple[dict[int, tuple[float, float, float]], list[dict]]:
@@ -161,25 +204,26 @@ def verify_c3d4_export_connectivity(path: Path, volumes: list[dict]) -> None:
         raise SolveError("C3D4 MSH connectivity does not match Gmsh's CalculiX export")
 
 
-def prepare_model(mesh_path: Path, element_type: str) -> tuple[dict, str]:
+def prepare_model(
+    mesh_path: Path,
+    element_type: str,
+    analysis: AnalysisDefinition | None = None,
+) -> tuple[dict, str]:
     nodes, elements = read_msh(mesh_path)
     configuration = MESH_ELEMENT_TYPES[element_type]
     converter = as_calculix_c3d10 if element_type == "C3D10" else as_calculix_c3d4
     volumes = [
         converter(item)
-        for item in elements
-        if item["type"] == configuration["volume"] and item["physical_tag"] == 1
+        for item in resolve_mesh_elements(
+            CANTILEVER_VOLUME, configuration["volume"], elements
+        )
     ]
-    fixed_faces = [
-        item
-        for item in elements
-        if item["type"] == configuration["surface"] and item["physical_tag"] == 2
-    ]
-    load_faces = [
-        item
-        for item in elements
-        if item["type"] == configuration["surface"] and item["physical_tag"] == 3
-    ]
+    fixed_faces = resolve_mesh_elements(
+        CANTILEVER_FIXED_FACE, configuration["surface"], elements
+    )
+    load_faces = resolve_mesh_elements(
+        CANTILEVER_LOAD_FACE, configuration["surface"], elements
+    )
     if not volumes or not fixed_faces or not load_faces:
         raise SolveError(f"The beam, fixed, and load {element_type} mesh groups must all be nonempty")
     if any(len(element["nodes"]) != configuration["nodes"] for element in volumes):
@@ -200,74 +244,115 @@ def prepare_model(mesh_path: Path, element_type: str) -> tuple[dict, str]:
         raise SolveError("The load node set contains a node away from x=1 m")
 
     load_surface = map_surface_faces(load_faces, volumes, element_type)
-    nodal_forces: dict[int, float] = {}
-    integrated_area = 0.0
-    for face in load_faces:
-        area = triangle_area(*(nodes[node] for node in face["nodes"][:3]))
-        integrated_area += area
-        # Constant-traction consistent loads: each C3D4 triangle node receives
-        # one third of its area. For C3D10 faces, corner shape functions
-        # integrate to zero and each midside node receives one third.
-        loaded_nodes = face["nodes"] if element_type == "C3D4" else face["nodes"][3:]
-        for node in loaded_nodes:
-            nodal_forces[node] = nodal_forces.get(node, 0.0) - TRACTION_PA * area / 3.0
+    if element_type == "C3D10":
+        if analysis is None:
+            raise SolveError("C3D10 cantilever preparation requires an AnalysisDefinition")
+        nodal_vectors, integrated_area, traction = map_uniform_force_to_c3d10_faces(
+            analysis.loads[0], load_faces, nodes, AREA_M2
+        )
+        resultant = tuple(
+            sum(vector[axis] for vector in nodal_vectors.values()) for axis in range(3)
+        )
+        nodal_forces = {node: vector[2] for node, vector in nodal_vectors.items()}
+    else:
+        nodal_forces: dict[int, float] = {}
+        integrated_area = 0.0
+        for face in load_faces:
+            area = triangle_area(*(nodes[node] for node in face["nodes"][:3]))
+            integrated_area += area
+            for node in face["nodes"]:
+                nodal_forces[node] = nodal_forces.get(node, 0.0) - TRACTION_PA * area / 3.0
+        traction = (0.0, 0.0, -TRACTION_PA)
+        resultant = (0.0, 0.0, sum(nodal_forces.values()))
 
-    resultant_z = sum(nodal_forces.values())
+    resultant_z = resultant[2]
     if not math.isclose(integrated_area, AREA_M2, rel_tol=1.0e-10, abs_tol=1.0e-12):
         raise SolveError(f"Integrated load-face area is {integrated_area}, expected {AREA_M2}")
     if not math.isclose(resultant_z, -RESULTANT_FORCE_N, rel_tol=1.0e-10, abs_tol=1.0e-8):
         raise SolveError(f"Integrated Z load is {resultant_z} N, expected -1000 N")
 
-    lines = [
-        "*HEADING",
-        f"Mechanical Design Intelligence - cantilever {element_type} sanity solve",
-        "*NODE, NSET=ALLNODES",
-    ]
-    lines.extend(f"{node}, {x:.16g}, {y:.16g}, {z:.16g}" for node, (x, y, z) in sorted(nodes.items()))
-    lines.append(f"*ELEMENT, TYPE={element_type}, ELSET=BEAM")
-    lines.extend(f"{item['id']}, " + ", ".join(map(str, item["nodes"])) for item in volumes)
-    lines.append("*NSET, NSET=FIXED")
-    lines.extend(wrapped_ids(fixed_nodes))
-    lines.append("*NSET, NSET=LOAD_NODES")
-    lines.extend(wrapped_ids(load_nodes))
-    load_face_sets: dict[str, list[int]] = {}
-    for element_id, face_label in load_surface:
-        load_face_sets.setdefault(face_label, []).append(element_id)
-    for face_label, element_ids in sorted(load_face_sets.items()):
-        lines.append(f"*ELSET, ELSET=LOAD_{face_label}")
-        lines.extend(wrapped_ids(sorted(element_ids)))
-    lines.append("*SURFACE, NAME=LOAD_FACE, TYPE=ELEMENT")
-    lines.extend(f"LOAD_{face_label}, {face_label}" for face_label in sorted(load_face_sets))
-    lines.extend(
-        [
-            "*MATERIAL, NAME=STEEL",
-            "*ELASTIC",
-            f"{YOUNGS_MODULUS_PA:.16g}, {POISSONS_RATIO}",
-            "*SOLID SECTION, ELSET=BEAM, MATERIAL=STEEL",
-            "*STEP",
-            "*STATIC",
-            "*BOUNDARY",
-            "FIXED, 1, 3, 0",
-            "*CLOAD",
+    if element_type == "C3D10":
+        boundary = translate_boundary_condition(
+            analysis.boundary_conditions[0], CANTILEVER_FIXED_FACE, fixed_nodes, "FIXED"
+        )
+        concentrated_loads = translate_nodal_force_representation(
+            analysis.loads[0], CANTILEVER_LOAD_FACE, nodal_vectors
+        )
+        deck = render_c3d10_linear_static_deck(
+            analysis,
+            nodes,
+            volumes,
+            boundary,
+            load_nodes,
+            load_surface,
+            concentrated_loads,
+            heading="Mechanical Design Intelligence - cantilever C3D10 sanity solve",
+            volume_set_name="BEAM",
+            load_node_set_name="LOAD_NODES",
+            load_face_set_prefix="LOAD_",
+            load_surface_name="LOAD_FACE",
+        )
+    else:
+        lines = [
+            "*HEADING",
+            f"Mechanical Design Intelligence - cantilever {element_type} sanity solve",
+            "*NODE, NSET=ALLNODES",
         ]
-    )
-    lines.extend(f"{node}, 3, {force:.16g}" for node, force in sorted(nodal_forces.items()))
-    lines.extend(
-        [
-            "*NODE FILE",
-            "U, RF",
-            "*EL FILE",
-            "S",
-            "*EL PRINT, ELSET=BEAM",
-            "S",
-            "*NODE PRINT, NSET=ALLNODES",
-            "U",
-            "*NODE PRINT, NSET=FIXED, TOTALS=YES",
-            "RF",
-            "*END STEP",
-            "",
-        ]
-    )
+        lines.extend(
+            f"{node}, {x:.16g}, {y:.16g}, {z:.16g}"
+            for node, (x, y, z) in sorted(nodes.items())
+        )
+        lines.append(f"*ELEMENT, TYPE={element_type}, ELSET=BEAM")
+        lines.extend(
+            f"{item['id']}, " + ", ".join(map(str, item["nodes"])) for item in volumes
+        )
+        lines.append("*NSET, NSET=FIXED")
+        lines.extend(wrapped_ids(fixed_nodes))
+        lines.append("*NSET, NSET=LOAD_NODES")
+        lines.extend(wrapped_ids(load_nodes))
+        load_face_sets: dict[str, list[int]] = {}
+        for element_id, face_label in load_surface:
+            load_face_sets.setdefault(face_label, []).append(element_id)
+        for face_label, element_ids in sorted(load_face_sets.items()):
+            lines.append(f"*ELSET, ELSET=LOAD_{face_label}")
+            lines.extend(wrapped_ids(sorted(element_ids)))
+        lines.append("*SURFACE, NAME=LOAD_FACE, TYPE=ELEMENT")
+        lines.extend(
+            f"LOAD_{face_label}, {face_label}" for face_label in sorted(load_face_sets)
+        )
+        lines.extend(
+            [
+                "*MATERIAL, NAME=STEEL",
+                "*ELASTIC",
+                f"{YOUNGS_MODULUS_PA:.16g}, {POISSONS_RATIO}",
+                "*SOLID SECTION, ELSET=BEAM, MATERIAL=STEEL",
+                "*STEP",
+                "*STATIC",
+                "*BOUNDARY",
+                "FIXED, 1, 3, 0",
+                "*CLOAD",
+            ]
+        )
+        lines.extend(
+            f"{node}, 3, {force:.16g}" for node, force in sorted(nodal_forces.items())
+        )
+        lines.extend(
+            [
+                "*NODE FILE",
+                "U, RF",
+                "*EL FILE",
+                "S",
+                "*EL PRINT, ELSET=BEAM",
+                "S",
+                "*NODE PRINT, NSET=ALLNODES",
+                "U",
+                "*NODE PRINT, NSET=FIXED, TOTALS=YES",
+                "RF",
+                "*END STEP",
+                "",
+            ]
+        )
+        deck = "\n".join(lines)
     model = {
         "node_count": len(nodes),
         "volume_element_type": element_type,
@@ -277,48 +362,25 @@ def prepare_model(mesh_path: Path, element_type: str) -> tuple[dict, str]:
         "load_face_element_count": len(load_faces),
         "load_node_count": len(load_nodes),
         "load_face_area_m2": integrated_area,
-        "traction_pa": [0.0, 0.0, -TRACTION_PA],
-        "integrated_resultant_n": [0.0, 0.0, resultant_z],
+        "traction_pa": list(traction),
+        "integrated_resultant_n": list(resultant),
         "calculix_load_representation": f"consistent {element_type}-face nodal loads",
     }
-    return model, "\n".join(lines)
+    return model, deck
 
 
 def inspect_dat(path: Path, nodes: dict[int, tuple[float, float, float]]) -> dict:
-    text = path.read_text(encoding="utf-8", errors="replace")
-    displacement_header = re.compile(r"displacements \(vx,vy,vz\)", re.IGNORECASE)
-    lines = text.splitlines()
-    displacements: dict[int, tuple[float, float, float]] = {}
-    reading = False
-    for line in lines:
-        if displacement_header.search(line):
-            reading = True
-            continue
-        if reading:
-            match = re.match(
-                r"\s*(\d+)\s+([-+\d.Ee]+)\s+([-+\d.Ee]+)\s+([-+\d.Ee]+)\s*$",
-                line,
-            )
-            if match:
-                displacements[int(match.group(1))] = tuple(float(value) for value in match.groups()[1:])
-            elif displacements and line.strip():
-                break
-    if not displacements:
-        raise SolveError("No nodal displacement table was found in the CalculiX .dat file")
-
-    max_node, max_vector = max(
-        displacements.items(), key=lambda item: math.sqrt(sum(value * value for value in item[1]))
+    numerical_result = parse_calculix_dat(path)
+    maximum_displacement = min(
+        numerical_result.displacements,
+        key=lambda item: (-vector_magnitude(item.displacement_m), item.node_id),
     )
-    max_magnitude = math.sqrt(sum(value * value for value in max_vector))
-    reaction_match = re.search(
-        r"total force \(fx,fy,fz\) for set FIXED.*?\n\s*"
-        r"([-+\d.Ee]+)\s+([-+\d.Ee]+)\s+([-+\d.Ee]+)",
-        text,
-        re.IGNORECASE,
-    )
-    if reaction_match is None:
+    max_node = maximum_displacement.node_id
+    max_vector = maximum_displacement.displacement_m.as_tuple()
+    max_magnitude = vector_magnitude(maximum_displacement.displacement_m)
+    if numerical_result.reaction_resultant_n is None:
         raise SolveError("No total fixed-support reaction was found in the CalculiX .dat file")
-    reaction = tuple(float(value) for value in reaction_match.groups())
+    reaction = numerical_result.reaction_resultant_n.as_tuple()
     return {
         "nonzero_displacement": max_magnitude > 0.0,
         "maximum_displacement_m": max_magnitude,
@@ -328,6 +390,11 @@ def inspect_dat(path: Path, nodes: dict[int, tuple[float, float, float]]) -> dic
         "direction_consistent_with_negative_z_load": max_vector[2] < 0.0,
         "maximum_at_free_end": math.isclose(nodes[max_node][0], 1.0, abs_tol=COORDINATE_TOLERANCE_M),
         "fixed_reaction_n": list(reaction),
+        "nodal_reaction_count": len(numerical_result.reactions),
+        "integration_point_stress_count": len(numerical_result.integration_point_stresses),
+        "integration_point_stress_output_present": bool(
+            numerical_result.integration_point_stresses
+        ),
         "reaction_balances_applied_z_load": math.isclose(
             reaction[2], RESULTANT_FORCE_N, rel_tol=1.0e-8, abs_tol=1.0e-5
         ),
@@ -367,8 +434,22 @@ def main() -> int:
         element_type = mesh_summary["mesh"]["volume_element_type"]
         if element_type not in MESH_ELEMENT_TYPES:
             raise SolveError(f"Unsupported mesh element type: {element_type}")
+        analysis = None
+        if element_type == "C3D10":
+            version_result = subprocess.run(
+                [ccx, "-v"], capture_output=True, check=False, text=True, timeout=10
+            )
+            version_output = "\n".join((version_result.stdout, version_result.stderr))
+            version_match = re.search(r"This is Version\s+([\d.]+)", version_output)
+            if version_match is None:
+                raise SolveError("Unable to identify the CalculiX version")
+            analysis = cantilever_analysis_definition(
+                mesh_summary["gmsh_version"],
+                version_match.group(1),
+                mesh_summary["mesh_size_m"],
+            )
         nodes, _ = read_msh(mesh_path)
-        model, deck = prepare_model(mesh_path, element_type)
+        model, deck = prepare_model(mesh_path, element_type, analysis)
         deck_path.write_text(deck, encoding="ascii")
         result = subprocess.run(
             [ccx, "-i", job_name],
@@ -389,8 +470,7 @@ def main() -> int:
             if not required.is_file() or required.stat().st_size == 0:
                 raise SolveError(f"Expected solver artifact is missing or empty: {required}")
         sanity = inspect_dat(dat_path, nodes)
-        frd_text = frd_path.read_text(encoding="utf-8", errors="replace")
-        sanity["stress_output_present"] = "STRESS" in frd_text.upper()
+        sanity["stress_output_present"] = sanity["integration_point_stress_output_present"]
         sanity["solver_completed"] = "JOB FINISHED" in result.stdout.upper()
         sanity["solver_warnings"] = [
             line.strip()
@@ -414,7 +494,14 @@ def main() -> int:
             )
         ):
             raise SolveError(f"One or more basic solve sanity checks failed: {sanity}")
-    except (OSError, subprocess.TimeoutExpired, SolveError, ValueError) as error:
+    except (
+        OSError,
+        subprocess.TimeoutExpired,
+        CalculixAdapterError,
+        CalculixResultParseError,
+        SolveError,
+        ValueError,
+    ) as error:
         print(f"error: {error}", file=sys.stderr)
         return 1
 

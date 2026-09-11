@@ -63,19 +63,19 @@ A force is represented as a positive magnitude in newtons plus a normalized thre
 
 Resolved `MeshConfig` currently supports the verified C3D10 path and records its derived quadratic order, characteristic size, and Gmsh/OpenCASCADE version. `SolverConfig` records CalculiX version, linear-static analysis, small-deformation behavior, and requested result quantities. CAD, generated mesh, solver input, result and artifact checksums, runtime, and worker/environment details remain runtime/result provenance rather than engineering definition fields.
 
-The axial bar is the sole initial consumer because its uniform force, fully fixed face, material, and C3D10 configuration have the least ambiguous mapping. Its geometry generation, consistent surface-load mapping, CalculiX execution, parsing, and analytical verification remain benchmark-specific. Cantilever and torsion migration is intentionally deferred.
+The axial bar was the initial consumer because its uniform force, fully fixed face, material, and C3D10 configuration had the least ambiguous mapping. The C3D10 cantilever is now the second consumer, using the same domain, mapping, adapter, parser, numerical-result, and evidence boundaries for a transverse force and bending-dominated response. Geometry generation and analytical verification remain benchmark-specific. Torsion migration is intentionally deferred.
 
 ### First CalculiX adapter boundary
 
-The axial path now implements the dependency direction `engineering domain -> geometry/mesh resolution -> CalculiX adapter -> solver deck`. `run_axial_bar_solve.py` remains the orchestration and benchmark-specific resolution layer: it maps the axial definition's named `axial_bar`, `fixed`, and `axial_load` selections to the physical-tag contract in the generated mesh, verifies their geometric locations, and obtains volume elements, surface faces, and node IDs. These resolved IDs are never written back into domain objects and are not treated as engineering identity.
+The axial and C3D10 cantilever paths implement the dependency direction `engineering domain -> geometry/mesh resolution -> CalculiX adapter -> solver deck`. Their solve scripts remain orchestration and benchmark-specific resolution layers: named geometry selections are mapped to each generated mesh's physical-tag contract, geometric locations are verified, and volume elements, surface faces, and node IDs are resolved. These IDs are never written back into domain objects and are not treated as engineering identity.
 
-`calculix_adapter.py` is the sole new owner of CalculiX DOF numbers and the axial deck syntax. It maps UX/UY/UZ to DOFs 1/2/3, emits the linear-isotropic `*MATERIAL`/`*ELASTIC` representation, combines contiguous constrained DOFs into `*BOUNDARY` rows, translates resolved nodal force vectors into `*CLOAD` rows, and renders the established axial C3D10 linear-static deck and output cards. It rejects solver identifiers, analysis modes, element formulations, load shapes, and output-request sets outside the one proven path. It is a concrete adapter, not an abstract solver interface or universal CalculiX syntax tree.
+`calculix_adapter.py` owns CalculiX DOF numbers and the proven C3D10 linear-static deck syntax. It maps UX/UY/UZ to DOFs 1/2/3, emits the linear-isotropic `*MATERIAL`/`*ELASTIC` representation, combines contiguous constrained DOFs into `*BOUNDARY` rows, translates resolved nodal force vectors into `*CLOAD` rows, and renders the established output cards. Its volume/set names and heading are explicit resolved inputs because axial and cantilever use different physical-group contracts; the axial compatibility wrapper preserves its established deck byte-for-byte. The adapter still rejects solver identifiers, analysis modes, formulations, load shapes, and output requests outside the two proven C3D10 force cases. It is not an abstract solver interface or universal CalculiX syntax tree. The C3D4 comparison retains its established benchmark-local deck path.
 
-The C3D10 consistent surface-force integration lives separately in `surface_load_mapping.py`. Architecturally it is geometry/mesh numerical mapping: it converts uniform traction over quadratic boundary faces into equivalent nodal force vectors using element shape functions. That mapping depends on the finite-element interpolation and resolved face, but not on CalculiX keywords or DOF numbering; a future solver that accepts equivalent nodal loads could reuse it. The axial benchmark still chooses the uniform-traction interpretation and expected face area, so those choices remain benchmark-specific. The CalculiX adapter begins only when it converts the resulting physical nodal vectors to solver DOFs and deck rows.
+The C3D10 consistent surface-force integration lives separately in `surface_load_mapping.py`. Architecturally it is geometry/mesh numerical mapping: it converts uniform traction over quadratic boundary faces into equivalent nodal force vectors using element shape functions. The same unchanged function now maps both axial `+X` and cantilever transverse `-Z` force intent, demonstrating that it is not tied to face-normal pressure or one load axis. The mapping depends on finite-element interpolation and the resolved face, not CalculiX keywords or DOF numbering. Each benchmark still chooses its traction interpretation and expected face area. The CalculiX adapter begins only when it converts physical nodal vectors to solver DOFs and deck rows.
 
 ### First CalculiX output boundary
 
-The axial path now completes the reverse boundary without collapsing raw numerical data into engineering evidence:
+The axial and C3D10 cantilever paths complete the reverse boundary without collapsing raw numerical data into engineering evidence:
 
 ```text
 Engineering Definition
@@ -99,7 +99,7 @@ Engineering Post-Processing
 Benchmark Evidence / future AnalysisResult
 ```
 
-`calculix_results.py` alone owns the supported DAT headers, row formats, component ordering, and fixed-set result markers. It parses nodal displacements, individual nodal reactions, the printed reaction resultant, and raw integration-point Cauchy stresses. Missing or truncated required records are errors; components are never inferred or replaced. The current axial deck writes all authoritative verification quantities to DAT. FRD remains a retained solver artifact, but its extrapolated/averaged stress representation is not used by the axial verification and no FRD parser is introduced in this slice.
+`calculix_results.py` alone owns the supported DAT headers, row formats, component ordering, and fixed-set result markers. The same unchanged parsing functions now parse axial and cantilever nodal displacements, individual reactions, printed reaction resultants, and raw integration-point Cauchy stresses. Missing or truncated required records are errors; components are never inferred or replaced. DAT is authoritative for these quantities. FRD remains a retained solver artifact, but its extrapolated/averaged stress representation is not used by either reusable result path and no FRD parser is introduced.
 
 `numerical_results.py` contains frozen, solver-neutral `Vector3`, `NodalDisplacement`, `NodalReaction`, `StressTensor`, `IntegrationPointStress`, and `NumericalResult` values. Tuple collections are copied, deterministically sorted, and checked for duplicate numerical identities. Field names make SI units explicit: displacement and optional location in metres, reaction in newtons, and stress in pascals. Node, element, and integration-point IDs are valid coordinates of a completed numerical solution; this does not permit engineering loads or constraints to use mesh IDs as identity.
 
@@ -107,11 +107,11 @@ Benchmark Evidence / future AnalysisResult
 
 Mesh-dependent reconstruction remains outside text parsing. The axial free-end centroid interpolation uses the existing C3D10 quadratic surface representation, and integration-point coordinates are reconstructed from the verified mesh connectivity and quadrature identity. These operations are numerical/mesh post-processing that could apply to another solver using the same representation, but they remain narrowly located in benchmark infrastructure rather than becoming a generic FEM library. Selection of the `x = 0.5 m` patch, comparison with `F/A`, strain reconstruction and Poisson references, equilibrium interpretation, and support-band diagnostics remain axial-benchmark verification.
 
-Full runtime provenance also remains separate. Existing artifacts retain CAD, mesh, input, DAT/FRD and software evidence; the numerical snapshot itself contains physical result values and numerical identities, not checksums, worker identity, timestamps, or analytical references. This is not a general multi-solver result framework. Cantilever and torsion continue using their established parsing paths.
+Full runtime provenance also remains separate. Existing artifacts retain CAD, mesh, input, DAT/FRD and software evidence; the numerical snapshot itself contains physical result values and numerical identities, not checksums, worker identity, timestamps, or analytical references. This is not a general multi-solver result framework. Torsion continues using its established parsing path.
 
 ### First engineering-evidence and AnalysisResult boundary
 
-The axial benchmark now proves the complete first Engineering Core dependency chain:
+The axial and cantilever benchmarks now prove the complete first Engineering Core dependency chain:
 
 ```text
 AnalysisDefinition
@@ -148,7 +148,7 @@ The stress summary selects the exact largest von Mises value calculated from raw
 
 The serializer emits stable JSON-compatible fields with explicit SI-unit names and no solver-file syntax. Local artifact references are deferred: paths are not durable engineering identity, while checksums and broader execution provenance already remain in the benchmark artifact. A future artifact model can link the compact result to detailed numerical fields without embedding those fields or inventing storage IDs now.
 
-Production factor of safety and pass/fail remain deferred because the relevant-stress selection policy is unresolved. In particular, the axial global peak lies in the perturbed support region and is not substituted for the predeclared interior analytical comparison. Selection of that interior region, `F/A` and strain references, free-end centroid interpolation, support diagnostics, and analytical interpretation remain benchmark-specific. Future UI, reports, persistence, regression tools, and AI review may consume `AnalysisResult`; AI remains downstream and cannot alter deterministic evidence or determine acceptance.
+Production factor of safety and pass/fail remain deferred because the relevant-stress selection policy is unresolved. In both current consumers, the global peak lies in the perturbed support region. It is not substituted for the axial interior analytical comparison or the cantilever's predeclared `x = 0.2 m` reconstructed beam-stress QoI. Axial `F/A`/strain references and cantilever Euler-Bernoulli displacement/section reconstruction remain benchmark-specific. Future UI, reports, persistence, regression tools, and AI review may consume `AnalysisResult`; AI remains downstream and cannot alter deterministic evidence or determine acceptance.
 
 ### Spike constraints
 

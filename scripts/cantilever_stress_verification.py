@@ -10,7 +10,10 @@ import sys
 import time
 from pathlib import Path
 
+from calculix_results import CalculixResultParseError, parse_calculix_dat
 from cantilever_mesh_convergence import LEVELS, run_json
+from engineering_postprocessing import von_mises_stress_pa
+from numerical_results import NumericalResult, StressTensor
 from run_cantilever_solve import as_calculix_c3d10, read_msh
 
 
@@ -319,21 +322,20 @@ def maximum_midside_deviation(
 
 
 def von_mises(stress: list[float]) -> float:
-    sxx, syy, szz, sxy, sxz, syz = stress
-    return math.sqrt(
-        0.5 * ((sxx - syy) ** 2 + (syy - szz) ** 2 + (szz - sxx) ** 2)
-        + 3.0 * (sxy**2 + sxz**2 + syz**2)
-    )
+    return von_mises_stress_pa(StressTensor(*stress))
 
 
-def extract_stress_evidence(mesh_path: Path, dat_path: Path) -> dict:
+def enrich_integration_point_stresses(
+    mesh_path: Path, numerical_result: NumericalResult
+) -> tuple[list[dict], dict[int, dict], dict[int, tuple[float, float, float]]]:
+    """Attach audited C3D10 locations/weights to solver-neutral raw stresses."""
     nodes, raw_elements = read_msh(mesh_path)
     volumes = {
         element["id"]: as_calculix_c3d10(element)
         for element in raw_elements
         if element["type"] == 11 and element["physical_tag"] == 1
     }
-    records = read_integration_point_stresses(dat_path)
+    records = numerical_result.integration_point_stresses
     expected_records = len(volumes) * 4
     if len(records) != expected_records:
         raise StressVerificationError(
@@ -341,21 +343,32 @@ def extract_stress_evidence(mesh_path: Path, dat_path: Path) -> dict:
         )
     enriched = []
     for record in records:
-        element = volumes.get(record["element_id"])
-        if element is None or record["integration_point"] not in range(1, 5):
+        element = volumes.get(record.element_id)
+        if element is None or record.integration_point not in range(1, 5):
             raise StressVerificationError("Stress record does not map to a C3D10 integration point")
         coordinates = interpolate_coordinates(
-            element["nodes"], nodes, GAUSS_NATURAL_COORDINATES[record["integration_point"] - 1]
+            element["nodes"], nodes, GAUSS_NATURAL_COORDINATES[record.integration_point - 1]
         )
         volume = tetrahedron_volume([nodes[node] for node in element["nodes"][:4]])
+        stress_pa = list(record.stress_pa.as_tuple())
         enriched.append(
             {
-                **record,
+                "element_id": record.element_id,
+                "integration_point": record.integration_point,
+                "stress_pa": stress_pa,
                 "coordinates_m": list(coordinates),
                 "weight_m3": volume / 4.0,
-                "von_mises_pa": von_mises(record["stress_pa"]),
+                "von_mises_pa": von_mises_stress_pa(record.stress_pa),
             }
         )
+    return enriched, volumes, nodes
+
+
+def extract_stress_evidence(mesh_path: Path, dat_path: Path) -> dict:
+    numerical_result = parse_calculix_dat(dat_path)
+    enriched, volumes, nodes = enrich_integration_point_stresses(
+        mesh_path, numerical_result
+    )
     intersecting_ids = {
         element_id
         for element_id, element in volumes.items()
@@ -560,7 +573,14 @@ def main() -> int:
         }
         study_path.parent.mkdir(parents=True, exist_ok=True)
         study_path.write_text(json.dumps(study, indent=2) + "\n", encoding="utf-8")
-    except (OSError, KeyError, ValueError, subprocess.TimeoutExpired, StressVerificationError) as error:
+    except (
+        OSError,
+        KeyError,
+        ValueError,
+        subprocess.TimeoutExpired,
+        CalculixResultParseError,
+        StressVerificationError,
+    ) as error:
         print(f"error: {error}", file=sys.stderr)
         return 1
 

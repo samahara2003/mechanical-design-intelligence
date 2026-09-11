@@ -156,6 +156,6 @@ def parse_calculix_dat_text(text: str, reaction_set_name: str = "FIXED") -> Nume
 
 
 def parse_calculix_dat(path: Path, reaction_set_name: str = "FIXED") -> NumericalResult:
-    """Parse the three authoritative DAT tables used by the axial benchmark."""
+    """Parse the authoritative DAT tables used by current linear-static benchmarks."""
     text = path.read_text(encoding="utf-8", errors="replace")
     return parse_calculix_dat_text(text, reaction_set_name)

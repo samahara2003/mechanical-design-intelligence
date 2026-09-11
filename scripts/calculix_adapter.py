@@ -1,4 +1,4 @@
-"""Concrete domain-to-CalculiX translation proven by the axial benchmark.
+"""Concrete domain-to-CalculiX translation proven by axial and cantilever benchmarks.
 
 This module owns CalculiX syntax and DOF numbering. Geometry selection and
 finite-element surface integration occur before values reach this boundary.
@@ -167,8 +167,8 @@ def translate_nodal_force_representation(
     return tuple(rows)
 
 
-def validate_axial_analysis_definition(analysis: AnalysisDefinition) -> None:
-    """Reject domain definitions outside the adapter's single proven capability."""
+def validate_c3d10_linear_static_analysis_definition(analysis: AnalysisDefinition) -> None:
+    """Reject domain definitions outside the adapter's proven C3D10 capability."""
     if analysis.solver.solver_identifier.casefold() != "calculix":
         raise CalculixAdapterError("this adapter supports only CalculiX")
     if analysis.solver.analysis_type is not AnalysisType.LINEAR_STATIC:
@@ -176,19 +176,24 @@ def validate_axial_analysis_definition(analysis: AnalysisDefinition) -> None:
     if analysis.solver.small_deformation is not True:
         raise CalculixAdapterError("this adapter supports only small-deformation analysis")
     if analysis.mesh.element_type is not MeshElementType.C3D10:
-        raise CalculixAdapterError("axial adapter currently supports only C3D10")
+        raise CalculixAdapterError("this adapter currently supports only C3D10")
     if len(analysis.loads) != 1 or not isinstance(analysis.loads[0], ForceLoad):
-        raise CalculixAdapterError("axial adapter requires exactly one ForceLoad")
+        raise CalculixAdapterError("this adapter requires exactly one ForceLoad")
     if len(analysis.boundary_conditions) != 1:
-        raise CalculixAdapterError("axial adapter requires exactly one boundary condition")
+        raise CalculixAdapterError("this adapter requires exactly one boundary condition")
     required_outputs = {"displacement", "reaction_force", "integration_point_stress"}
     if set(analysis.solver.output_requests) != required_outputs:
         raise CalculixAdapterError(
-            "axial adapter requires displacement, reaction_force, and integration_point_stress outputs"
+            "this adapter requires displacement, reaction_force, and integration_point_stress outputs"
         )
 
 
-def render_axial_linear_static_deck(
+def validate_axial_analysis_definition(analysis: AnalysisDefinition) -> None:
+    """Backward-compatible name for the original axial adapter validation."""
+    validate_c3d10_linear_static_analysis_definition(analysis)
+
+
+def render_c3d10_linear_static_deck(
     analysis: AnalysisDefinition,
     nodes: dict[int, tuple[float, float, float]],
     volume_elements: list[dict],
@@ -196,39 +201,43 @@ def render_axial_linear_static_deck(
     load_node_ids: list[int],
     mapped_load_surface: list[tuple[int, str]],
     concentrated_loads: tuple[CalculixConcentratedLoad, ...],
+    *,
+    heading: str,
+    volume_set_name: str,
+    load_node_set_name: str,
+    load_face_set_prefix: str,
+    load_surface_name: str,
 ) -> str:
-    """Render only the established axial C3D10 deck, preserving its exact layout."""
-    validate_axial_analysis_definition(analysis)
+    """Render the proven C3D10 linear-static deck with explicit resolved set names."""
+    validate_c3d10_linear_static_analysis_definition(analysis)
     material = translate_material(analysis.material)
-    lines = [
-        "*HEADING",
-        "Mechanical Design Intelligence - axial bar C3D10 verification",
-        "*NODE, NSET=ALLNODES",
-    ]
+    lines = ["*HEADING", heading, "*NODE, NSET=ALLNODES"]
     lines.extend(
         f"{node}, {x:.16g}, {y:.16g}, {z:.16g}"
         for node, (x, y, z) in sorted(nodes.items())
     )
-    lines.append("*ELEMENT, TYPE=C3D10, ELSET=AXIAL_BAR")
+    lines.append(f"*ELEMENT, TYPE=C3D10, ELSET={volume_set_name}")
     lines.extend(
         f"{element['id']}, " + ", ".join(map(str, element["nodes"]))
         for element in volume_elements
     )
     lines.extend(boundary.node_set_lines())
-    lines.append("*NSET, NSET=AXIAL_LOAD_NODES")
+    lines.append(f"*NSET, NSET={load_node_set_name}")
     lines.extend(wrapped_ids(sorted(set(load_node_ids))))
     face_sets: dict[str, list[int]] = {}
     for element_id, face_label in mapped_load_surface:
         face_sets.setdefault(face_label, []).append(element_id)
     for face_label, element_ids in sorted(face_sets.items()):
-        lines.append(f"*ELSET, ELSET=AXIAL_LOAD_{face_label}")
+        lines.append(f"*ELSET, ELSET={load_face_set_prefix}{face_label}")
         lines.extend(wrapped_ids(sorted(element_ids)))
-    lines.append("*SURFACE, NAME=AXIAL_LOAD_FACE, TYPE=ELEMENT")
-    lines.extend(f"AXIAL_LOAD_{label}, {label}" for label in sorted(face_sets))
+    lines.append(f"*SURFACE, NAME={load_surface_name}, TYPE=ELEMENT")
+    lines.extend(
+        f"{load_face_set_prefix}{label}, {label}" for label in sorted(face_sets)
+    )
     lines.extend(material.lines())
     lines.extend(
         [
-            f"*SOLID SECTION, ELSET=AXIAL_BAR, MATERIAL={material.name}",
+            f"*SOLID SECTION, ELSET={volume_set_name}, MATERIAL={material.name}",
             "*STEP",
             "*STATIC",
             "*BOUNDARY",
@@ -243,7 +252,7 @@ def render_axial_linear_static_deck(
             "U, RF",
             "*EL FILE",
             "S",
-            "*EL PRINT, ELSET=AXIAL_BAR",
+            f"*EL PRINT, ELSET={volume_set_name}",
             "S",
             "*NODE PRINT, NSET=ALLNODES",
             "U",
@@ -254,3 +263,29 @@ def render_axial_linear_static_deck(
         ]
     )
     return "\n".join(lines)
+
+
+def render_axial_linear_static_deck(
+    analysis: AnalysisDefinition,
+    nodes: dict[int, tuple[float, float, float]],
+    volume_elements: list[dict],
+    boundary: CalculixBoundary,
+    load_node_ids: list[int],
+    mapped_load_surface: list[tuple[int, str]],
+    concentrated_loads: tuple[CalculixConcentratedLoad, ...],
+) -> str:
+    """Render only the established axial C3D10 deck, preserving its exact layout."""
+    return render_c3d10_linear_static_deck(
+        analysis,
+        nodes,
+        volume_elements,
+        boundary,
+        load_node_ids,
+        mapped_load_surface,
+        concentrated_loads,
+        heading="Mechanical Design Intelligence - axial bar C3D10 verification",
+        volume_set_name="AXIAL_BAR",
+        load_node_set_name="AXIAL_LOAD_NODES",
+        load_face_set_prefix="AXIAL_LOAD_",
+        load_surface_name="AXIAL_LOAD_FACE",
+    )
