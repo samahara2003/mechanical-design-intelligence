@@ -11,44 +11,62 @@ import subprocess
 import sys
 from pathlib import Path
 
-from axial_bar_definition import AXIAL_FIXED_BOUNDARY, AXIAL_FORCE, AXIAL_MATERIAL
+from axial_bar_definition import (
+    AXIAL_BAR_VOLUME,
+    AXIAL_FIXED_FACE,
+    AXIAL_FORCE,
+    AXIAL_LOAD_FACE,
+    axial_bar_analysis_definition,
+)
+from calculix_adapter import (
+    CalculixAdapterError,
+    render_axial_linear_static_deck,
+    translate_boundary_condition,
+    translate_nodal_force_representation,
+    validate_axial_analysis_definition,
+)
 from cantilever_verification import VerificationError, read_displacements
-from engineering_domain import TranslationalDof
+from engineering_domain import AnalysisDefinition, GeometrySelection
 from run_cantilever_solve import (
     SolveError,
     as_calculix_c3d10,
     map_surface_faces,
     read_msh,
-    triangle_area,
-    wrapped_ids,
+)
+from surface_load_mapping import (
+    consistent_quadratic_face_loads,
+    map_uniform_force_to_c3d10_faces,
 )
 
 
-YOUNGS_MODULUS_PA = AXIAL_MATERIAL.youngs_modulus_pa
-POISSONS_RATIO = AXIAL_MATERIAL.poissons_ratio
 AREA_M2 = 0.0025
 RESULTANT_FORCE_N = AXIAL_FORCE.magnitude_n
-TRACTION_PA = RESULTANT_FORCE_N / AREA_M2
 COORDINATE_TOLERANCE_M = 1.0e-8
+AXIAL_PHYSICAL_TAG_BY_SELECTION = {
+    AXIAL_BAR_VOLUME: 1,
+    AXIAL_FIXED_FACE: 2,
+    AXIAL_LOAD_FACE: 3,
+}
 
 
-def consistent_quadratic_face_loads(
-    faces: list[dict],
-    nodes: dict[int, tuple[float, float, float]],
-    traction_pa: tuple[float, float, float],
-) -> tuple[dict[int, tuple[float, float, float]], float]:
-    nodal: dict[int, list[float]] = {}
-    total_area = 0.0
-    for face in faces:
-        if len(face["nodes"]) != 6:
-            raise SolveError("Axial load face must use six-node quadratic triangles")
-        area = triangle_area(*(nodes[node] for node in face["nodes"][:3]))
-        total_area += area
-        for node in face["nodes"][3:]:
-            vector = nodal.setdefault(node, [0.0, 0.0, 0.0])
-            for axis in range(3):
-                vector[axis] += traction_pa[axis] * area / 3.0
-    return {node: tuple(vector) for node, vector in nodal.items()}, total_area
+def resolve_mesh_elements(
+    selection: GeometrySelection,
+    msh_element_type: int,
+    elements: list[dict],
+) -> list[dict]:
+    """Resolve an axial named geometry selection through its Gmsh physical tag."""
+    try:
+        physical_tag = AXIAL_PHYSICAL_TAG_BY_SELECTION[selection]
+    except KeyError as error:
+        raise SolveError(f"No axial mesh resolution exists for {selection}") from error
+    resolved = [
+        element
+        for element in elements
+        if element["type"] == msh_element_type and element["physical_tag"] == physical_tag
+    ]
+    if not resolved:
+        raise SolveError(f"Geometry selection {selection.region_name!r} resolved to no mesh entities")
+    return resolved
 
 
 def verify_export_connectivity(path: Path, volumes: list[dict]) -> None:
@@ -73,21 +91,15 @@ def verify_export_connectivity(path: Path, volumes: list[dict]) -> None:
         raise SolveError("Converted C3D10 connectivity does not match Gmsh's CalculiX export")
 
 
-def prepare_model(mesh_path: Path) -> tuple[dict, str]:
+def prepare_model(mesh_path: Path, analysis: AnalysisDefinition) -> tuple[dict, str]:
+    validate_axial_analysis_definition(analysis)
     nodes, elements = read_msh(mesh_path)
     volumes = [
         as_calculix_c3d10(element)
-        for element in elements
-        if element["type"] == 11 and element["physical_tag"] == 1
+        for element in resolve_mesh_elements(AXIAL_BAR_VOLUME, 11, elements)
     ]
-    fixed_faces = [
-        element for element in elements if element["type"] == 9 and element["physical_tag"] == 2
-    ]
-    load_faces = [
-        element for element in elements if element["type"] == 9 and element["physical_tag"] == 3
-    ]
-    if not volumes or not fixed_faces or not load_faces:
-        raise SolveError("Axial-bar volume, fixed, and axial-load groups must be nonempty")
+    fixed_faces = resolve_mesh_elements(AXIAL_FIXED_FACE, 9, elements)
+    load_faces = resolve_mesh_elements(AXIAL_LOAD_FACE, 9, elements)
     verify_export_connectivity(mesh_path.with_name("axial_bar_mesh.inp"), volumes)
     fixed_nodes = sorted({node for face in fixed_faces for node in face["nodes"]})
     load_nodes = sorted({node for face in load_faces for node in face["nodes"]})
@@ -96,10 +108,11 @@ def prepare_model(mesh_path: Path) -> tuple[dict, str]:
     if any(abs(nodes[node][0] - 1.0) > COORDINATE_TOLERANCE_M for node in load_nodes):
         raise SolveError("Axial-load node set contains a node away from x=1")
     mapped_surface = map_surface_faces(load_faces, volumes, "C3D10")
-    nodal_loads, area = consistent_quadratic_face_loads(
+    nodal_loads, area, traction = map_uniform_force_to_c3d10_faces(
+        analysis.loads[0],
         load_faces,
         nodes,
-        tuple(TRACTION_PA * component for component in AXIAL_FORCE.direction),
+        AREA_M2,
     )
     resultant = tuple(sum(vector[axis] for vector in nodal_loads.values()) for axis in range(3))
     if not math.isclose(area, AREA_M2, rel_tol=1.0e-10, abs_tol=1.0e-12):
@@ -110,72 +123,23 @@ def prepare_model(mesh_path: Path) -> tuple[dict, str]:
     ):
         raise SolveError(f"Integrated load is {resultant}, expected (1000, 0, 0) N")
 
-    dof_numbers = {
-        TranslationalDof.UX: 1,
-        TranslationalDof.UY: 2,
-        TranslationalDof.UZ: 3,
-    }
-    constrained_dofs = sorted(
-        dof_numbers[dof] for dof in AXIAL_FIXED_BOUNDARY.constrained_dofs
+    boundary = translate_boundary_condition(
+        analysis.boundary_conditions[0],
+        AXIAL_FIXED_FACE,
+        fixed_nodes,
+        "FIXED",
     )
-    if constrained_dofs != [1, 2, 3]:
-        raise SolveError("Axial benchmark requires the established UX/UY/UZ fixed support")
-
-    lines = [
-        "*HEADING",
-        "Mechanical Design Intelligence - axial bar C3D10 verification",
-        "*NODE, NSET=ALLNODES",
-    ]
-    lines.extend(
-        f"{node}, {x:.16g}, {y:.16g}, {z:.16g}"
-        for node, (x, y, z) in sorted(nodes.items())
+    concentrated_loads = translate_nodal_force_representation(
+        analysis.loads[0], AXIAL_LOAD_FACE, nodal_loads
     )
-    lines.append("*ELEMENT, TYPE=C3D10, ELSET=AXIAL_BAR")
-    lines.extend(f"{element['id']}, " + ", ".join(map(str, element["nodes"])) for element in volumes)
-    lines.append("*NSET, NSET=FIXED")
-    lines.extend(wrapped_ids(fixed_nodes))
-    lines.append("*NSET, NSET=AXIAL_LOAD_NODES")
-    lines.extend(wrapped_ids(load_nodes))
-    face_sets: dict[str, list[int]] = {}
-    for element_id, face_label in mapped_surface:
-        face_sets.setdefault(face_label, []).append(element_id)
-    for face_label, element_ids in sorted(face_sets.items()):
-        lines.append(f"*ELSET, ELSET=AXIAL_LOAD_{face_label}")
-        lines.extend(wrapped_ids(sorted(element_ids)))
-    lines.append("*SURFACE, NAME=AXIAL_LOAD_FACE, TYPE=ELEMENT")
-    lines.extend(f"AXIAL_LOAD_{label}, {label}" for label in sorted(face_sets))
-    lines.extend(
-        [
-            f"*MATERIAL, NAME={AXIAL_MATERIAL.name}",
-            "*ELASTIC",
-            f"{YOUNGS_MODULUS_PA:.16g}, {POISSONS_RATIO}",
-            f"*SOLID SECTION, ELSET=AXIAL_BAR, MATERIAL={AXIAL_MATERIAL.name}",
-            "*STEP",
-            "*STATIC",
-            "*BOUNDARY",
-            f"FIXED, {constrained_dofs[0]}, {constrained_dofs[-1]}, 0",
-            "*CLOAD",
-        ]
-    )
-    for node, vector in sorted(nodal_loads.items()):
-        for degree, value in enumerate(vector, start=1):
-            if value != 0.0:
-                lines.append(f"{node}, {degree}, {value:.16g}")
-    lines.extend(
-        [
-            "*NODE FILE",
-            "U, RF",
-            "*EL FILE",
-            "S",
-            "*EL PRINT, ELSET=AXIAL_BAR",
-            "S",
-            "*NODE PRINT, NSET=ALLNODES",
-            "U",
-            "*NODE PRINT, NSET=FIXED, TOTALS=YES",
-            "RF",
-            "*END STEP",
-            "",
-        ]
+    deck = render_axial_linear_static_deck(
+        analysis,
+        nodes,
+        volumes,
+        boundary,
+        load_nodes,
+        mapped_surface,
+        concentrated_loads,
     )
     model = {
         "node_count": len(nodes),
@@ -186,12 +150,12 @@ def prepare_model(mesh_path: Path) -> tuple[dict, str]:
         "load_face_element_count": len(load_faces),
         "load_node_count": len(load_nodes),
         "load_face_area_m2": area,
-        "traction_pa": [TRACTION_PA, 0.0, 0.0],
+        "traction_pa": list(traction),
         "integrated_resultant_n": list(resultant),
         "calculix_load_representation": "consistent C3D10-face nodal loads in global +X",
         "connectivity_verified_against_gmsh_export": True,
     }
-    return model, "\n".join(lines)
+    return model, deck
 
 
 def inspect_dat(path: Path, nodes: dict[int, tuple[float, float, float]]) -> dict:
@@ -253,8 +217,22 @@ def main() -> int:
     for path in output_dir.glob(f"{job_name}.*"):
         path.unlink()
     try:
+        mesh_summary_path = output_dir / "axial_bar_mesh_summary.json"
+        if not mesh_summary_path.is_file():
+            raise SolveError(f"Mesh summary is missing: {mesh_summary_path}")
+        mesh_summary = json.loads(mesh_summary_path.read_text(encoding="utf-8"))
+        version_result = subprocess.run(
+            [ccx, "-v"], capture_output=True, check=False, text=True, timeout=10
+        )
+        version_output = "\n".join((version_result.stdout, version_result.stderr))
+        version_match = re.search(r"This is Version\s+([\d.]+)", version_output)
+        if version_match is None:
+            raise SolveError("Unable to identify the CalculiX version")
+        analysis = axial_bar_analysis_definition(
+            mesh_summary["gmsh_version"], version_match.group(1)
+        )
         nodes, _ = read_msh(mesh_path)
-        model, deck = prepare_model(mesh_path)
+        model, deck = prepare_model(mesh_path, analysis)
         deck_path = output_dir / f"{job_name}.inp"
         deck_path.write_text(deck, encoding="ascii")
         result = subprocess.run(
@@ -294,7 +272,14 @@ def main() -> int:
             )
         ):
             raise SolveError(f"Axial-bar solve sanity failed: {sanity}")
-    except (OSError, subprocess.TimeoutExpired, SolveError, ValueError, VerificationError) as error:
+    except (
+        OSError,
+        subprocess.TimeoutExpired,
+        CalculixAdapterError,
+        SolveError,
+        ValueError,
+        VerificationError,
+    ) as error:
         print(f"error: {error}", file=sys.stderr)
         return 1
 

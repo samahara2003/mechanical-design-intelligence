@@ -65,6 +65,16 @@ Resolved `MeshConfig` currently supports the verified C3D10 path and records its
 
 The axial bar is the sole initial consumer because its uniform force, fully fixed face, material, and C3D10 configuration have the least ambiguous mapping. Its geometry generation, consistent surface-load mapping, CalculiX execution, parsing, and analytical verification remain benchmark-specific. Cantilever and torsion migration is intentionally deferred.
 
+### First CalculiX adapter boundary
+
+The axial path now implements the dependency direction `engineering domain -> geometry/mesh resolution -> CalculiX adapter -> solver deck`. `run_axial_bar_solve.py` remains the orchestration and benchmark-specific resolution layer: it maps the axial definition's named `axial_bar`, `fixed`, and `axial_load` selections to the physical-tag contract in the generated mesh, verifies their geometric locations, and obtains volume elements, surface faces, and node IDs. These resolved IDs are never written back into domain objects and are not treated as engineering identity.
+
+`calculix_adapter.py` is the sole new owner of CalculiX DOF numbers and the axial deck syntax. It maps UX/UY/UZ to DOFs 1/2/3, emits the linear-isotropic `*MATERIAL`/`*ELASTIC` representation, combines contiguous constrained DOFs into `*BOUNDARY` rows, translates resolved nodal force vectors into `*CLOAD` rows, and renders the established axial C3D10 linear-static deck and output cards. It rejects solver identifiers, analysis modes, element formulations, load shapes, and output-request sets outside the one proven path. It is a concrete adapter, not an abstract solver interface or universal CalculiX syntax tree.
+
+The C3D10 consistent surface-force integration lives separately in `surface_load_mapping.py`. Architecturally it is geometry/mesh numerical mapping: it converts uniform traction over quadratic boundary faces into equivalent nodal force vectors using element shape functions. That mapping depends on the finite-element interpolation and resolved face, but not on CalculiX keywords or DOF numbering; a future solver that accepts equivalent nodal loads could reuse it. The axial benchmark still chooses the uniform-traction interpretation and expected face area, so those choices remain benchmark-specific. The CalculiX adapter begins only when it converts the resulting physical nodal vectors to solver DOFs and deck rows.
+
+Result parsing remains unchanged and outside this adapter slice. No cantilever or torsion migration, general solver abstraction, plugin mechanism, factory, or execution framework is introduced.
+
 ### Spike constraints
 
 The spike does not include a web UI, API product surface, database, authentication, cloud deployment, durable queue, SSE, AI review, distributed execution, production infrastructure, or DFM functionality. It must not introduce a custom finite element solver or speculative infrastructure.
