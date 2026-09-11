@@ -209,3 +209,50 @@ Global integration-point peaks are retained separately as diagnostics:
 These peaks are selected directly from the same raw DAT integration-point tensors; their six components, element and integration-point identifiers, and consistently mapped physical coordinates are retained in the artifact. Von Mises stress is calculated from all three normal and all three engineering shear stress components using the standard invariant expression. The peaks occur close to the fully fixed face and increase with refinement over the tested meshes. That behavior is consistent with strong mesh sensitivity in the boundary region, but it does not by itself distinguish a boundary effect from a stress concentration or establish a mathematical singularity. The peaks are not compared with the `38.4 MPa` section reference and are not used for pass/fail.
 
 Every run retained an approximately `-1000 N` applied Z resultant and `+1000 N` support reaction, reproduced the established C3D10 centroid-displacement value within `5e-10 m`, and reported no CalculiX warnings. This experiment provides evidence that the selected C3D10 models reproduce the expected longitudinal bending distribution at the frozen section with low mesh sensitivity for this reconstructed quantity. It does not establish general stress convergence, resolve the fixed-boundary peak behavior, verify other stress components or formulations, or physically validate the model.
+
+## C3D10 axial-bar benchmark
+
+The axial-bar benchmark complements the bending-focused cantilever evidence by exercising axial load transfer, reaction equilibrium, longitudinal displacement and stress, and Poisson response through an independent analytical case. Passing either benchmark does not establish correctness of the other quantities or general solver verification.
+
+The frozen bar is `L = 1.0 m`, `b = h = 0.05 m`, `A = 0.0025 m^2`, `E = 200 GPa`, and `nu = 0.30`. A consistent quadratic-face nodal load represents uniform `+X` traction of `400000 Pa` on the `x = 1 m` face, integrating to `+1000 N`. The entire `x = 0` face is fixed in UX, UY, and UZ. The geometry is exported as STEP in millimetres, re-imported into Gmsh/OpenCASCADE in metres, grouped as `axial_bar`, `fixed`, and `axial_load`, meshed with C3D10 at the preselected `0.0125 m` characteristic size, converted with verified Gmsh-to-CalculiX connectivity, and solved by CalculiX as a small-deformation linear-static isotropic model.
+
+The ideal uniaxial references are:
+
+`sigma_xx = F/A = 400000 Pa = 0.4 MPa`
+
+`epsilon_xx = sigma_xx/E = 2e-6`
+
+`epsilon_yy = epsilon_zz = -nu*epsilon_xx = -6e-7`
+
+`delta_x = F L/(A E) = 2e-6 m = 0.002 mm`
+
+The displacement QoI is the global displacement vector at the free-end face centroid `(1.0, 0.025, 0.025) m`, evaluated using six-node quadratic-triangle interpolation. The mesh contains 13,218 nodes and 7,242 C3D10 elements. The interpolated result is `(UX, UY, UZ) = (1.996734046e-6, -1.070376e-10, 1.933251e-10) m`. UX is `3.265954e-9 m` below the ideal reference, a `0.163298%` disagreement. The transverse centroid components are negligible relative to UX.
+
+Stress verification uses raw Cauchy stress from CalculiX DAT output requested with `*EL PRINT, ELSET=AXIAL_BAR` and `S`. FRD nodally extrapolated and averaged stresses are not used. The interior region was fixed before results were observed: all four integration points of every C3D10 tetrahedron whose corner-node X range intersects `x = 0.5 m`. It contains 94 elements and 376 raw samples spanning `x = 0.489668851` to `0.509045085 m`. Each point uses its equal-rule physical weight of one quarter of the straight-sided parent tetrahedron volume.
+
+| Component | Volume-weighted mean (Pa) | Raw minimum (Pa) | Raw maximum (Pa) | Standard deviation (Pa) |
+| --- | ---: | ---: | ---: | ---: |
+| sigma_xx | 400000.0 | 400000.0 | 400000.0 | 0.0 |
+| sigma_yy | -6.22e-10 | -2.51e-8 | 3.96e-8 | 1.00e-8 |
+| sigma_zz | -2.22e-9 | -3.59e-8 | 3.60e-8 | 9.67e-9 |
+| sigma_xy | -2.14e-8 | -6.88e-8 | 1.46e-8 | 1.54e-8 |
+| sigma_xz | 9.91e-9 | -2.04e-8 | 4.29e-8 | 1.02e-8 |
+| sigma_yz | -4.41e-10 | -1.17e-8 | 1.07e-8 | 3.71e-9 |
+
+The volume-weighted mean `sigma_xx` differs from `0.4 MPa` only at floating-point summation level (`1.46e-14%`). The transverse and shear components are numerically negligible in this interior patch, and the zero observed `sigma_xx` spread is limited by the precision written to DAT; it must not be generalized into a mesh-convergence claim.
+
+Normal strains are reconstructed independently for each raw stress tensor using isotropic elastic compliance:
+
+`epsilon_xx = (sigma_xx - nu*(sigma_yy + sigma_zz))/E`
+
+`epsilon_yy = (sigma_yy - nu*(sigma_xx + sigma_zz))/E`
+
+`epsilon_zz = (sigma_zz - nu*(sigma_xx + sigma_yy))/E`
+
+The volume-weighted interior means are `epsilon_xx = 2.000000000000004e-6`, `epsilon_yy = -5.999999999999998e-7`, and `epsilon_zz = -6.000000000000101e-7`. These agree with the ideal uniaxial and Poisson references at numerical precision. Because the same isotropic constitutive law was supplied to CalculiX and used for reconstruction, this is a deterministic strain interpretation check, not an independent verification of the constitutive implementation.
+
+Equilibrium is preserved in all axes: applied resultant `(1000.0000000000001, 0, 0) N` and fixed-support reaction `(-1000.0, 7.07e-11, -9.23e-12) N`. No CalculiX warning was reported.
+
+The predeclared one-section-depth support band (`x <= 0.05 m`) confirms the expected fixed-face perturbation. Its mean `sigma_xx` is `0.399989 MPa`, with a `0.342246` to `0.532868 MPa` range; mean `sigma_yy` and `sigma_zz` are about `0.022 MPa`, individual transverse stresses reach about `0.202 MPa`, and shear magnitudes reach about `0.120 MPa`. Its combined non-axial-stress RMS is `0.072119 MPa`, versus approximately `3.34e-14 MPa` in the interior. This is evidence of local three-dimensional constraint effects, not a singularity claim. The predeclared loaded-end band (`x >= 0.95 m`) remains uniaxial to DAT precision under the consistent uniform traction and shows no comparable loading-boundary perturbation.
+
+The `0.163298%` elongation disagreement is consistent with comparing the fully constrained three-dimensional support model against the ideal one-dimensional free-Poisson bar reference; it is not labeled pure FEA error. This single-mesh analytical benchmark does not establish mesh independence, general stress convergence, general CalculiX verification, physical validation, nonlinear behavior, yielding, or C3D4 axial behavior.

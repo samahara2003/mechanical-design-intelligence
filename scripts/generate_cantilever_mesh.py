@@ -134,7 +134,11 @@ def parse_geometry_counts(output: str) -> dict[str, int]:
     return dict(zip(("volumes", "surfaces", "fixed", "load"), map(int, match.groups())))
 
 
-def parse_msh(path: Path, element_type: str) -> dict[str, object]:
+def parse_msh(
+    path: Path,
+    element_type: str,
+    expected_groups: dict[str, dict[str, int]] | None = None,
+) -> dict[str, object]:
     lines = path.read_text(encoding="utf-8").splitlines()
 
     def section_count(section: str) -> int:
@@ -166,11 +170,12 @@ def parse_msh(path: Path, element_type: str) -> dict[str, object]:
                 "tag": int(tag),
             }
 
-    expected_groups = {
-        "beam": {"dimension": 3, "tag": 1},
-        "fixed": {"dimension": 2, "tag": 2},
-        "load": {"dimension": 2, "tag": 3},
-    }
+    if expected_groups is None:
+        expected_groups = {
+            "beam": {"dimension": 3, "tag": 1},
+            "fixed": {"dimension": 2, "tag": 2},
+            "load": {"dimension": 2, "tag": 3},
+        }
     if physical_names != expected_groups:
         raise SpikeError(
             f"Unexpected physical groups in {path}: {physical_names}; expected {expected_groups}"
