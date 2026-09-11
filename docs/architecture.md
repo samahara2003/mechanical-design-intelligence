@@ -73,7 +73,41 @@ The axial path now implements the dependency direction `engineering domain -> ge
 
 The C3D10 consistent surface-force integration lives separately in `surface_load_mapping.py`. Architecturally it is geometry/mesh numerical mapping: it converts uniform traction over quadratic boundary faces into equivalent nodal force vectors using element shape functions. That mapping depends on the finite-element interpolation and resolved face, but not on CalculiX keywords or DOF numbering; a future solver that accepts equivalent nodal loads could reuse it. The axial benchmark still chooses the uniform-traction interpretation and expected face area, so those choices remain benchmark-specific. The CalculiX adapter begins only when it converts the resulting physical nodal vectors to solver DOFs and deck rows.
 
-Result parsing remains unchanged and outside this adapter slice. No cantilever or torsion migration, general solver abstraction, plugin mechanism, factory, or execution framework is introduced.
+### First CalculiX output boundary
+
+The axial path now completes the reverse boundary without collapsing raw numerical data into engineering evidence:
+
+```text
+Engineering Definition
+        |
+        v
+CalculiX Input Adapter
+        |
+        v
+     CalculiX
+        |
+        v
+CalculiX Result Parser
+        |
+        v
+Solver-Neutral Numerical Result
+        |
+        v
+Engineering Post-Processing
+        |
+        v
+Benchmark Evidence / future AnalysisResult
+```
+
+`calculix_results.py` alone owns the supported DAT headers, row formats, component ordering, and fixed-set result markers. It parses nodal displacements, individual nodal reactions, the printed reaction resultant, and raw integration-point Cauchy stresses. Missing or truncated required records are errors; components are never inferred or replaced. The current axial deck writes all authoritative verification quantities to DAT. FRD remains a retained solver artifact, but its extrapolated/averaged stress representation is not used by the axial verification and no FRD parser is introduced in this slice.
+
+`numerical_results.py` contains frozen, solver-neutral `Vector3`, `NodalDisplacement`, `NodalReaction`, `StressTensor`, `IntegrationPointStress`, and `NumericalResult` values. Tuple collections are copied, deterministically sorted, and checked for duplicate numerical identities. Field names make SI units explicit: displacement and optional location in metres, reaction in newtons, and stress in pascals. Node, element, and integration-point IDs are valid coordinates of a completed numerical solution; this does not permit engineering loads or constraints to use mesh IDs as identity.
+
+`engineering_postprocessing.py` begins the downstream deterministic layer with vector magnitude and the three-dimensional stress-tensor-to-von-Mises invariant. Von Mises is derived rather than stored as raw solver output. It is not automatically reduced to a global peak, a relevant design stress, factor of safety, or pass/fail decision. Those require an explicit critical-region and stress-selection policy, particularly around constrained supports and other mesh-sensitive regions.
+
+Mesh-dependent reconstruction remains outside text parsing. The axial free-end centroid interpolation uses the existing C3D10 quadratic surface representation, and integration-point coordinates are reconstructed from the verified mesh connectivity and quadrature identity. These operations are numerical/mesh post-processing that could apply to another solver using the same representation, but they remain narrowly located in benchmark infrastructure rather than becoming a generic FEM library. Selection of the `x = 0.5 m` patch, comparison with `F/A`, strain reconstruction and Poisson references, equilibrium interpretation, and support-band diagnostics remain axial-benchmark verification.
+
+Full runtime provenance also remains separate. Existing artifacts retain CAD, mesh, input, DAT/FRD and software evidence; the numerical snapshot itself contains physical result values and numerical identities, not checksums, worker identity, timestamps, or analytical references. This is neither a final `AnalysisResult` nor a general multi-solver result framework. Cantilever and torsion continue using their established parsing paths.
 
 ### Spike constraints
 

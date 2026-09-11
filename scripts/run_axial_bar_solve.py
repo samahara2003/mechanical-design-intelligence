@@ -25,7 +25,8 @@ from calculix_adapter import (
     translate_nodal_force_representation,
     validate_axial_analysis_definition,
 )
-from cantilever_verification import VerificationError, read_displacements
+from calculix_results import CalculixResultParseError, parse_calculix_dat
+from engineering_postprocessing import vector_magnitude
 from engineering_domain import AnalysisDefinition, GeometrySelection
 from run_cantilever_solve import (
     SolveError,
@@ -159,30 +160,31 @@ def prepare_model(mesh_path: Path, analysis: AnalysisDefinition) -> tuple[dict, 
 
 
 def inspect_dat(path: Path, nodes: dict[int, tuple[float, float, float]]) -> dict:
-    text = path.read_text(encoding="utf-8", errors="replace")
-    displacements = read_displacements(path)
-    maximum_node, maximum_vector = max(
-        displacements.items(), key=lambda item: math.sqrt(sum(value**2 for value in item[1]))
+    numerical_result = parse_calculix_dat(path)
+    maximum_displacement = max(
+        numerical_result.displacements,
+        key=lambda item: vector_magnitude(item.displacement_m),
     )
-    reaction_match = re.search(
-        r"total force \(fx,fy,fz\) for set FIXED.*?\n\s*"
-        r"([-+\d.Ee]+)\s+([-+\d.Ee]+)\s+([-+\d.Ee]+)",
-        text,
-        re.IGNORECASE,
-    )
-    if reaction_match is None:
+    maximum_node = maximum_displacement.node_id
+    maximum_vector = maximum_displacement.displacement_m.as_tuple()
+    if numerical_result.reaction_resultant_n is None:
         raise SolveError("No total fixed-support reaction found in DAT")
-    reaction = tuple(float(value) for value in reaction_match.groups())
+    reaction = numerical_result.reaction_resultant_n.as_tuple()
     return {
         "maximum_displacement_node": maximum_node,
         "maximum_displacement_vector_m": list(maximum_vector),
-        "maximum_displacement_m": math.sqrt(sum(value**2 for value in maximum_vector)),
+        "maximum_displacement_m": vector_magnitude(maximum_displacement.displacement_m),
         "maximum_displacement_node_x_m": nodes[maximum_node][0],
         "maximum_at_loaded_end": math.isclose(
             nodes[maximum_node][0], 1.0, abs_tol=COORDINATE_TOLERANCE_M
         ),
         "direction_consistent_with_positive_x_load": maximum_vector[0] > 0.0,
         "fixed_reaction_n": list(reaction),
+        "nodal_reaction_count": len(numerical_result.reactions),
+        "integration_point_stress_count": len(numerical_result.integration_point_stresses),
+        "integration_point_stress_output_present": bool(
+            numerical_result.integration_point_stresses
+        ),
         "reaction_balances_applied_load": math.isclose(
             reaction[0], -RESULTANT_FORCE_N, rel_tol=1.0e-8, abs_tol=1.0e-5
         )
@@ -254,9 +256,6 @@ def main() -> int:
             if not required.is_file() or required.stat().st_size == 0:
                 raise SolveError(f"Expected solver artifact is missing or empty: {required}")
         sanity = inspect_dat(dat_path, nodes)
-        sanity["integration_point_stress_output_present"] = "stresses (elem, integ.pnt." in dat_path.read_text(
-            encoding="utf-8", errors="replace"
-        )
         sanity["solver_completed"] = "JOB FINISHED" in result.stdout.upper()
         sanity["solver_warnings"] = [
             line.strip() for line in result.stdout.splitlines() if "warning" in line.lower()
@@ -276,9 +275,9 @@ def main() -> int:
         OSError,
         subprocess.TimeoutExpired,
         CalculixAdapterError,
+        CalculixResultParseError,
         SolveError,
         ValueError,
-        VerificationError,
     ) as error:
         print(f"error: {error}", file=sys.stderr)
         return 1

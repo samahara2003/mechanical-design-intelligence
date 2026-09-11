@@ -30,9 +30,10 @@ from cantilever_verification import (
     VerificationError,
     barycentric_yz,
     quadratic_triangle_weights,
-    read_displacements,
 )
+from calculix_results import CalculixResultParseError, parse_calculix_dat
 from engineering_domain import analysis_definition_to_dict
+from numerical_results import NumericalResult
 from run_cantilever_solve import as_calculix_c3d10, read_msh
 
 
@@ -215,6 +216,47 @@ def enrich_stress_records(mesh_path: Path, dat_path: Path) -> tuple[list[dict], 
     return enriched, volumes, nodes
 
 
+def enrich_numerical_stress_records(
+    mesh_path: Path, numerical_result: NumericalResult
+) -> tuple[list[dict], dict[int, dict], dict]:
+    """Add mesh-derived coordinates and benchmark strain to neutral stress values."""
+    nodes, raw_elements = read_msh(mesh_path)
+    volumes = {
+        element["id"]: as_calculix_c3d10(element)
+        for element in raw_elements
+        if element["type"] == 11 and element["physical_tag"] == 1
+    }
+    records = numerical_result.integration_point_stresses
+    if len(records) != 4 * len(volumes):
+        raise AxialVerificationError(
+            f"Found {len(records)} integration-point records for {len(volumes)} C3D10 elements"
+        )
+    enriched = []
+    for record in records:
+        element = volumes.get(record.element_id)
+        if element is None or record.integration_point not in range(1, 5):
+            raise AxialVerificationError("Stress record cannot be mapped to a C3D10 integration point")
+        coordinates = interpolate_coordinates(
+            element["nodes"],
+            nodes,
+            GAUSS_NATURAL_COORDINATES[record.integration_point - 1],
+        )
+        volume = tetrahedron_volume([nodes[node] for node in element["nodes"][:4]])
+        stress_pa = list(record.stress_pa.as_tuple())
+        strain = isotropic_strain_from_stress(stress_pa, YOUNGS_MODULUS_PA, POISSONS_RATIO)
+        enriched.append(
+            {
+                "element_id": record.element_id,
+                "integration_point": record.integration_point,
+                "stress_pa": stress_pa,
+                "coordinates_m": list(coordinates),
+                "weight_m3": volume / 4.0,
+                "reconstructed_normal_strain": list(strain),
+            }
+        )
+    return enriched, volumes, nodes
+
+
 def region_record(samples: list[dict], method: str) -> dict:
     return {
         "selection": method,
@@ -269,7 +311,8 @@ def main() -> int:
             for element in raw_elements
             if element["type"] == 9 and element["physical_tag"] == 3
         ]
-        displacements = read_displacements(dat_path)
+        numerical_result = parse_calculix_dat(dat_path)
+        displacements = numerical_result.displacement_tuples_by_node()
         centroid_displacement, interpolation = interpolate_face_displacement(
             nodes, load_faces, displacements
         )
@@ -280,7 +323,7 @@ def main() -> int:
             centroid_displacement[0], references["elongation_m"]
         )
 
-        all_samples, volumes, _ = enrich_stress_records(mesh_path, dat_path)
+        all_samples, volumes, _ = enrich_numerical_stress_records(mesh_path, numerical_result)
         intersecting_ids = {
             element_id
             for element_id, element in volumes.items()
@@ -353,6 +396,15 @@ def main() -> int:
                 "representation": solve["model"]["calculix_load_representation"],
             },
             "boundary_condition": "entire x=0 face fixed in UX, UY, UZ",
+            "numerical_result": {
+                "source": "CalculiX DAT parsed once into an immutable solver-neutral snapshot",
+                "displacement_count": len(numerical_result.displacements),
+                "reaction_count": len(numerical_result.reactions),
+                "integration_point_stress_count": len(
+                    numerical_result.integration_point_stresses
+                ),
+                "frd_role": "retained solver artifact; not an authoritative verification source",
+            },
             "mesh": {
                 "characteristic_size_m": MESH_SIZE_M,
                 "element_type": "C3D10",
@@ -419,6 +471,7 @@ def main() -> int:
         ValueError,
         subprocess.TimeoutExpired,
         AxialVerificationError,
+        CalculixResultParseError,
         ConvergenceError,
         VerificationError,
     ) as error:
