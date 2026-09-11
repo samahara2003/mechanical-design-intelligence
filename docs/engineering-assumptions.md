@@ -92,3 +92,9 @@ The bending-stress verification quantity is longitudinal Cauchy stress `sigma_xx
 ## Axial-bar benchmark
 
 The axial-bar benchmark uses the same 1.0 m by 0.05 m by 0.05 m rectangular solid and the same fully fixed `x = 0` face convention as the cantilever, with a consistent `+X` surface-traction resultant at `x = 1 m`. Fixing UX, UY, and UZ over the entire support face intentionally suppresses free Poisson contraction there. The immediate support region is therefore a three-dimensional constraint perturbation and is not assumed to be in a perfect uniaxial stress state. The analytical uniaxial comparison uses a predeclared interior patch centered at `x = 0.5 m`; this single-mesh benchmark does not establish axial mesh independence or general stress convergence.
+
+## Square-bar torsion benchmark
+
+The torsion benchmark uses the same solid dimensions and fully fixed `x = 0` convention, with a distributed tangential traction on `x = 1` scaled from its actual consistently assembled C3D10 nodal moment to produce `+100 N*m` about X and zero resultant force. Fully restraining the support suppresses Saint-Venant warping there and perturbs the nearby stress field. The linear radial-tangential end traction is resultant-equivalent but is not assumed to equal the exact Saint-Venant traction distribution for a square section.
+
+The analytical twist reference uses `Jt = 0.1406 a^4`; the polar second moment `Iy+Iz` is not used as a torsional constant. Free-end rotation is an equal-node least-squares estimate from transverse surface displacements, while free-end UX is only qualitative warping evidence. Raw DAT integration-point stresses in a predeclared `x = 0.5 m` patch support qualitative shear-field inspection, not an exact analytical stress comparison. This single mesh does not establish torsional mesh independence, general stress convergence, or physical validation.

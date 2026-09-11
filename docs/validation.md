@@ -256,3 +256,58 @@ Equilibrium is preserved in all axes: applied resultant `(1000.0000000000001, 0,
 The predeclared one-section-depth support band (`x <= 0.05 m`) confirms the expected fixed-face perturbation. Its mean `sigma_xx` is `0.399989 MPa`, with a `0.342246` to `0.532868 MPa` range; mean `sigma_yy` and `sigma_zz` are about `0.022 MPa`, individual transverse stresses reach about `0.202 MPa`, and shear magnitudes reach about `0.120 MPa`. Its combined non-axial-stress RMS is `0.072119 MPa`, versus approximately `3.34e-14 MPa` in the interior. This is evidence of local three-dimensional constraint effects, not a singularity claim. The predeclared loaded-end band (`x >= 0.95 m`) remains uniaxial to DAT precision under the consistent uniform traction and shows no comparable loading-boundary perturbation.
 
 The `0.163298%` elongation disagreement is consistent with comparing the fully constrained three-dimensional support model against the ideal one-dimensional free-Poisson bar reference; it is not labeled pure FEA error. This single-mesh analytical benchmark does not establish mesh independence, general stress convergence, general CalculiX verification, physical validation, nonlinear behavior, yielding, or C3D4 axial behavior.
+
+## C3D10 square-bar torsion benchmark
+
+The torsion benchmark adds independent evidence for pure-moment loading, moment equilibrium, rotational response, longitudinal shear, and non-circular-section warping. It complements but is not proved by the bending and axial benchmarks. The frozen model is a `1.0 m` long square bar with side `a = 0.05 m`, `E = 200 GPa`, `nu = 0.30`, and torque `Tx = +100 N*m`. It follows the same real ingestion boundary: a millimetre STEP fixture is re-imported by Gmsh/OpenCASCADE in metres, assigned the physical groups `torsion_bar`, `fixed`, and `torque_load`, meshed at the preselected `0.0125 m` size with C3D10 elements, converted with the audited connectivity permutation, and solved by CalculiX. The mesh has 13,218 nodes and 7,242 C3D10 elements.
+
+The loaded-face traction is derived as
+
+`t(y,z) = (0, -k(z-zc), +k(y-yc))`, with `(yc,zc) = (0.025,0.025) m`.
+
+For each quadratic surface triangle, the product of this linear traction and the quadratic shape functions is integrated using a four-point degree-three-exact triangle rule. A unit-`k` load is assembled first; its actual nodal moment determines `k = 95,999,999.99999997 Pa/m` for the requested torque. The final assembled loads give force `(0, -2.36e-13, +3.87e-13) N` and moment about the loaded-face centroid `(100.00000000000001, 0, 0) N*m`. This is neither a single nodal moment nor an unverified force couple.
+
+For isotropic elasticity, `G = E/[2(1+nu)] = 76.923076923 GPa`. The analytical reference uses the documented approximate square Saint-Venant constant `Jt = 0.1406 a^4 = 8.7875e-7 m^4`, giving
+
+`theta = T L/(G Jt) = 0.001479374110953058 rad`.
+
+The polar second moment is `Iy+Iz = 1.041666666666667e-6 m^4`; it is recorded for contrast and is not substituted for `Jt`. These quantities are not interchangeable for a non-circular section.
+
+The primary numerical QoI is an equal-node least-squares fit over the 105 unique free-end surface nodes. It simultaneously fits rigid transverse translations and the small-angle field `UY = ty - theta(z-zc)`, `UZ = tz + theta(y-yc)`, so a small section translation does not bias the rotation. The result is `theta = 0.001474008751862423 rad`, an absolute difference of `5.365359091e-6 rad` and `0.362678%` disagreement from the Saint-Venant reference. The transverse fit residual is `5.76009e-8 m` RMS and `1.22036e-7 m` maximum absolute, exposing the non-rigid part of the end-face response rather than hiding it.
+
+The free-end value is retained as a system-level total rotation, but the cleaner Saint-Venant QoI is the interior twist rate. Exact geometric sections were predeclared at `x = 0.25`, `0.50`, and `0.75 m`. Because these are not mesh node planes, every straight-sided tetrahedron is intersected with each requested X plane. The resulting convex polygons are triangulated, and displacement is evaluated from the C3D10 shape functions at a positive seven-point, degree-five-exact triangle rule. The same translation-plus-rotation equations are then fit with physical area weights. Thus the reported locations are the requested planes themselves, rather than undocumented nearest-node planes. Each integrated cross-section recovers the expected `0.0025 m^2` area.
+
+| Requested / actual X (m) | Intersected elements | Quadrature points | Fitted theta (rad) | Fitted `(ty,tz)` (m) | RMS residual (m) | Maximum residual (m) |
+| --- | ---: | ---: | ---: | --- | ---: | ---: |
+| 0.25 / 0.2499999999999999 | 78 | 700 | 0.000366971972123 | `(2.256e-10, 7.074e-10)` | 4.133e-10 | 2.056e-9 |
+| 0.50 / 0.4999999999999999 | 73 | 616 | 0.000735335748856 | `(1.012e-10, 1.238e-9)` | 4.926e-10 | 2.071e-9 |
+| 0.75 / 0.7499999999999997 | 83 | 700 | 0.001103735449712 | `(6.285e-10, 2.158e-9)` | 3.614e-10 | 1.828e-9 |
+
+Ordinary least squares over these three area-fitted section rotations gives
+
+`theta(x) = -1.415754025e-6 + 0.001473526955179*x`.
+
+The angular fit residual is `8.46740e-9 rad` RMS and `1.19747e-8 rad` maximum, with `R^2 = 0.9999999992075`. The analytical Saint-Venant rate is `T/(GJt) = 0.001479374110953 rad/m`; the FEA interior rate differs by `5.847156e-6 rad/m`, or `0.395245%`. No acceptance threshold is attached to this comparison.
+
+Extrapolating the interior line to `x = 1 m` gives `0.001472111201153 rad`, while the independently retained free-face fit is `0.001474008751862 rad`, higher by `1.897551e-6 rad` or `0.128900%` of the extrapolated value. Together with the very linear interior field, this supports a small end-region influence on total free-end rotation. It does not quantitatively separate the effects of the fixed support, the resultant-equivalent loaded-face traction, finite length, or discretization. The interior-rate disagreement is slightly larger than the free-end total-rotation disagreement, so “cleaner” here means less directly dependent on either boundary traction distribution, not numerically closer by construction.
+
+Free-end axial displacement is summarized over the same nodes: minimum `UX = -2.067025e-7 m`, maximum `+2.058629e-7 m`, mean `2.72021e-10 m`, and RMS variation about the mean `9.12781e-8 m`. The signed, nonuniform field is consistent with square-section warping, subject to the finite-length model and the applied end traction. No analytical warping-function verification is claimed.
+
+Stress evidence comes only from raw CalculiX DAT Cauchy tensors requested by `*EL PRINT, ELSET=TORSION_BAR` with `S`, not FRD extrapolated or nodally averaged stresses. The predeclared interior patch includes all four integration points of the 94 C3D10 elements whose corner-node X range intersects `x = 0.5 m`: 376 samples spanning `x = 0.4896688511` to `0.5090450850 m`. Straight-element volume-quarter weights give the following summary.
+
+| Component | Volume-weighted mean (MPa) | Raw minimum (MPa) | Raw maximum (MPa) | RMS (MPa) |
+| --- | ---: | ---: | ---: | ---: |
+| sigma_xx | -0.000885 | -0.531980 | 0.549252 | 0.131588 |
+| sigma_yy | -0.000806 | -0.228974 | 0.241329 | 0.048729 |
+| sigma_zz | -0.002650 | -0.229062 | 0.230156 | 0.048711 |
+| sigma_xy | -0.059550 | -3.554830 | 3.489491 | 1.458400 |
+| sigma_xz | -0.043488 | -3.470823 | 3.472026 | 1.491968 |
+| sigma_yz | -0.000105 | -0.038378 | 0.042596 | 0.011253 |
+
+Raw-point von Mises ranges from `0.220048` to `6.157698 MPa`, with a volume-weighted mean of `3.360461 MPa`. The combined longitudinal-shear RMS is `2.086360 MPa`, about 14.0 times the combined RMS of the normal and transverse-shear components. Both `sigma_xy` and `sigma_xz` change sign. Centroid-tied quadrants also show the expected organized sign pattern: mean `sigma_xy` switches with Z, while mean `sigma_xz` switches with Y. These are qualitative square-torsion checks; no circular-shaft `tau=Tr/J` comparison or stress acceptance threshold is used.
+
+Reaction forces reconstructed from the individual support rows are `(4.20e-10, -1.69e-9, +1.55e-9) N`. Their moment about the same loaded-face centroid is `(-99.99999815, +1.97e-5, -4.09e-5) N*m`. The small transverse moment residues reflect the finite decimal precision of individual DAT rows. CalculiX 2.23 reported no warning.
+
+The predeclared one-width support band (`x <= 0.05 m`) retains a similar longitudinal-shear RMS (`2.098479 MPa`) but its combined normal/transverse-shear RMS is `0.416170 MPa`, 2.79 times the interior value; longitudinal-shear dominance drops from 14.0 in the interior to 5.04. This documents local perturbation from fully suppressing end warping without declaring a singularity. The distributed linear end traction is resultant-equivalent but is not the exact Saint-Venant traction distribution for a square, so load-end and finite-length effects can also contribute to the free-end fit and analytical disagreement.
+
+This is one mesh and one torque case. It does not establish mesh independence, a full analytical square-section stress or warping solution, general stress convergence, physical validation, nonlinear behavior, yielding, C3D4 behavior, or general CalculiX verification. No pass/fail threshold is defined.
