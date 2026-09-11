@@ -258,6 +258,8 @@ def prepare_model(mesh_path: Path, element_type: str) -> tuple[dict, str]:
             "U, RF",
             "*EL FILE",
             "S",
+            "*EL PRINT, ELSET=BEAM",
+            "S",
             "*NODE PRINT, NSET=ALLNODES",
             "U",
             "*NODE PRINT, NSET=FIXED, TOTALS=YES",

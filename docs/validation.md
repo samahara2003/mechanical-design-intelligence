@@ -139,3 +139,73 @@ Within each formulation, reducing characteristic size is h-refinement. Increasin
 For this bending-dominated cantilever benchmark and the tested characteristic mesh sizes, C3D4 produced a substantially stiffer displacement response and changed substantially under h-refinement. Its disagreement with the Euler-Bernoulli reference decreases from about 50.38% to 9.20% across the chosen levels but has not stabilized to the degree seen for C3D10. C3D10 results exactly reproduce the established convergence values and show much smaller successive changes and closer agreement with the Euler-Bernoulli reference at greater node, degree-of-freedom, and runtime cost. This behavior does not prove that C3D10 is universally superior: it applies to this geometry, loading, quantity, mesh family, and bending-dominated case.
 
 All eight runs preserve negative displacement sign, approximately `-1000 N` applied Z resultant, `+1000 N` fixed-support Z reaction, and no CalculiX warnings. No acceptance threshold is defined. The study compares displacement only and does not establish stress convergence or general solver accuracy.
+
+## C3D10 longitudinal bending-stress study
+
+The stress verification quantity is longitudinal normal stress `sigma_xx`, not von Mises stress or a global maximum. The section is frozen at `x = 0.2 m`, four section depths from the fixed face, and was selected before stress results were observed. This avoids result-driven sampling but does not assert that `x/h = 4` is a universal Saint-Venant boundary.
+
+Euler-Bernoulli theory gives `sigma_xx = -M_y z/I`, where `z` is measured from the section centroid. With the beam along global `+X` and the force in global `-Z`, the internal section moment is `M_y = -F(L-x) = -800 N*m`. Using `I = b h^3/12 = 5.208333333333335e-7 m^4`, the upper fiber is tensile `+38.4 MPa`, the lower fiber is compressive `-38.4 MPa`, and the neutral-axis value is zero. The 3D elasticity and Euler-Bernoulli models are not identical, so reported percentages are Euler-Bernoulli disagreement, not pure FEA error.
+
+CalculiX `*EL FILE, S` stores Cauchy stress in FRD after extrapolation from integration points to nodes and averaging contributions from adjacent elements. Those convenient visualization values are not raw nodal stresses. This study adds `*EL PRINT, ELSET=BEAM` with `S`, which writes the six global Cauchy-stress components to DAT at each of the four C3D10 integration points. The integration-point representation is used because it is the least post-processed stress output available from the current solve.
+
+For each mesh, the deterministic section patch contains all four integration points from every tetrahedron whose corner-node X range intersects `x = 0.2 m`. Physical integration-point coordinates are evaluated using the C3D10 quadratic shape functions and CalculiX's four-point tetrahedral rule. The implemented Gmsh-to-CalculiX permutation matches every element in Gmsh's independent CalculiX export. CalculiX integration-point record numbers map in order to `(low,low,low)`, `(high,low,low)`, `(low,high,low)`, and `(low,low,high)`, where `low = 0.138196601125011` and `high = 0.585410196624968`. Ordering matters for section reconstruction and diagnostic locations because it pairs each stress tensor with its physical point; it does not affect the unordered set of global peak values.
+
+A volume-weighted least-squares field is fit using the basis `1`, `x-0.2`, `y-0.025`, `z-0.025`, and `(x-0.2)(z-0.025)`. The interaction term represents the axial bending-moment gradient without shifting the frozen evaluation section. At `x = 0.2 m` and `y = 0.025 m`, the fit reduces to a line through the depth. Its intercept, depth slope, neutral-axis crossing, and extrapolated values at the exact outer fibers are reported. The four-point rule has equal reference weights. All midside nodes in these meshes lie at their edge midpoints within `1.68e-16 m`, making the geometry straight-sided with constant Jacobian to numerical precision; physical quadrature weight is therefore one quarter of the actual corner-defined tetrahedron volume. This weighting prevents smaller tetrahedra from receiving disproportionate influence merely because each element contributes four samples. It is benchmark-specific and is not valid without pointwise Jacobian evaluation for curved C3D10 geometry.
+
+| Level | Samples | Upper sigma_xx (MPa) | Lower sigma_xx (MPa) | Mean outer magnitude (MPa) | Euler-Bernoulli disagreement | Change from previous |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| coarse | 88 | 38.400935 | -38.400343 | 38.400639 | 0.001664% | — |
+| medium | 200 | 38.406709 | -38.407534 | 38.407122 | 0.018546% | 0.016882% |
+| fine | 396 | 38.400706 | -38.401085 | 38.400896 | 0.002333% | 0.016211% |
+| finer | 704 | 38.399872 | -38.399821 | 38.399846 | 0.000400% | 0.002733% |
+
+| Level | Depth slope (GPa/m) | Neutral-axis sigma_xx (kPa) | Reconstructed neutral-axis Z (m) | Weighted RMSE (kPa) | Weighted R-squared |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| coarse | 1.536025563 | 0.296067 | 0.024999807 | 53.985770 | 0.999994677 |
+| medium | 1.536284872 | -0.412405 | 0.025000268 | 32.832995 | 0.999997841 |
+| fine | 1.536035832 | -0.189536 | 0.025000123 | 18.105346 | 0.999999345 |
+| finer | 1.535993850 | 0.025264 | 0.024999984 | 10.745042 | 0.999999760 |
+
+All four reconstructed section lines have the expected upper-tension/lower-compression sign reversal. Their fitted neutral-axis values are near zero, reconstructed zero crossings are near `z = 0.025 m`, and residual metrics against the raw CalculiX integration-point `sigma_xx` values decrease under refinement. The basis assumes linear variation with Z at the frozen section, so high R-squared does not independently prove linearity; R-squared and RMSE quantify compatibility of the raw samples with that selected local model. Outer-fiber magnitude is stable but not strictly monotonic; no acceptance or convergence threshold is defined.
+
+Whole-element inclusion creates an irregular finite axial patch rather than sampling exactly on the section. The axial and axial-depth terms reduce bias from that patch, but the result remains a local model-based reconstruction. The raw integration-point X bands shrink across the tested refinements:
+
+| Level | Raw sample X minimum (m) | Raw sample X maximum (m) | Span (m) | Span / mesh size |
+| --- | ---: | ---: | ---: | ---: |
+| coarse | 0.181910353 | 0.218100582 | 0.036190229 | 1.447609 |
+| medium | 0.186605237 | 0.205887637 | 0.019282400 | 1.090777 |
+| fine | 0.190230604 | 0.209045085 | 0.018814481 | 1.505158 |
+| finer | 0.191662471 | 0.207462878 | 0.015800408 | 1.787612 |
+
+As an independently specified sensitivity cross-check, the same raw section-patch samples are also fit by equal-weight ordinary least squares of `sigma_xx` versus Z only. This deliberately omits X, Y, axial-depth interaction, and volume weighting. It still assumes linear variation with Z, so it is not independent proof of linearity, but it tests dependence of the reported magnitude on the full reconstruction basis.
+
+| Level | Z-only outer magnitude (MPa) | Euler-Bernoulli disagreement | Raw-fit RMSE (kPa) | Raw-fit R-squared |
+| --- | ---: | ---: | ---: | ---: |
+| coarse | 38.400140 | 0.000365% | 316.013 | 0.999841547 |
+| medium | 38.598182 | 0.516100% | 160.948 | 0.999953253 |
+| fine | 38.432061 | 0.083492% | 128.060 | 0.999969956 |
+| finer | 38.403739 | 0.009738% | 87.965 | 0.999985636 |
+
+Direct, unfitted depth-band summaries provide a second view of the raw evidence. Mean `sigma_xx` in the fixed lower quarter is `-30.98`, `-30.20`, `-29.80`, and `-29.80 MPa`; the fixed upper-quarter means are `+31.10`, `+30.11`, `+29.68`, and `+29.26 MPa`. The central quarter-depth-band means are `-0.287`, `-0.053`, `+0.090`, and `+0.495 MPa`. These interior raw values exhibit the expected lower-compression/upper-tension trend without using the fitted outer-fiber result. They are not outer-fiber evaluations and are not compared directly with `38.4 MPa`.
+
+The exact fiber values are extrapolations, not raw FEA evaluations. Closest raw integration-point distances are:
+
+| Level | Upper distance (m) | Upper / mesh size | Lower distance (m) | Lower / mesh size |
+| --- | ---: | ---: | ---: | ---: |
+| coarse | 0.003290229 | 0.131609 | 0.003433010 | 0.137320 |
+| medium | 0.002099680 | 0.118776 | 0.002099680 | 0.118776 |
+| fine | 0.001056856 | 0.084549 | 0.001496022 | 0.119682 |
+| finer | 0.000638786 | 0.072270 | 0.001083939 | 0.122634 |
+
+Global integration-point peaks are retained separately as diagnostics:
+
+| Level | Minimum sigma_xx (MPa) at `(x,y,z)` m | Maximum sigma_xx (MPa) at `(x,y,z)` m | Maximum von Mises (MPa) at `(x,y,z)` m |
+| --- | --- | --- | --- |
+| coarse | -46.173340 at `(0.002271, 0.007796, 0.001806)` | 46.061000 at `(0.002003, 0.031424, 0.048057)` | 43.641400 at `(0.011625, 0.024072, 0.048057)` |
+| medium | -47.462810 at `(0.005822, 0.001664, 0.001664)` | 47.465280 at `(0.005822, 0.001664, 0.048336)` | 44.494973 at `(0.005822, 0.001664, 0.001664)` |
+| fine | -50.713440 at `(0.004223, 0.001150, 0.001265)` | 50.730540 at `(0.004223, 0.001150, 0.048735)` | 47.696018 at `(0.004223, 0.001150, 0.001265)` |
+| finer | -57.051670 at `(0.000818, 0.000843, 0.002816)` | 57.312420 at `(0.000804, 0.049157, 0.047200)` | 52.188009 at `(0.002834, 0.049179, 0.049195)` |
+
+These peaks are selected directly from the same raw DAT integration-point tensors; their six components, element and integration-point identifiers, and consistently mapped physical coordinates are retained in the artifact. Von Mises stress is calculated from all three normal and all three engineering shear stress components using the standard invariant expression. The peaks occur close to the fully fixed face and increase with refinement over the tested meshes. That behavior is consistent with strong mesh sensitivity in the boundary region, but it does not by itself distinguish a boundary effect from a stress concentration or establish a mathematical singularity. The peaks are not compared with the `38.4 MPa` section reference and are not used for pass/fail.
+
+Every run retained an approximately `-1000 N` applied Z resultant and `+1000 N` support reaction, reproduced the established C3D10 centroid-displacement value within `5e-10 m`, and reported no CalculiX warnings. This experiment provides evidence that the selected C3D10 models reproduce the expected longitudinal bending distribution at the frozen section with low mesh sensitivity for this reconstructed quantity. It does not establish general stress convergence, resolve the fixed-boundary peak behavior, verify other stress components or formulations, or physically validate the model.
