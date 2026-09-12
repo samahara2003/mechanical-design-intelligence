@@ -86,15 +86,15 @@ try {
   ));
   await succeeds("ModelVersion insertion", () => client.query(
     `INSERT INTO model_versions
-      (id, model_id, version_number, original_filename, cad_sha256)
-     VALUES ($1, $2, 1, $3, $4)`,
-    [versionId, modelId, "verification.step", "a".repeat(64)],
+      (id, model_id, version_number, original_filename, cad_sha256, source_size_bytes)
+     VALUES ($1, $2, 1, $3, $4, $5)`,
+    [versionId, modelId, "verification.step", "a".repeat(64), 1024],
   ));
   await client.query(
     `INSERT INTO model_versions
-      (id, model_id, version_number, original_filename, cad_sha256)
-     VALUES ($1, $2, 2, $3, $4)`,
-    [secondVersionId, modelId, "verification-v2.step", "b".repeat(64)],
+      (id, model_id, version_number, original_filename, cad_sha256, source_size_bytes)
+     VALUES ($1, $2, 2, $3, $4, $5)`,
+    [secondVersionId, modelId, "verification-v2.step", "b".repeat(64), 2048],
   );
   await client.query(
     `INSERT INTO analyses (id, model_version_id, engineering_definition)

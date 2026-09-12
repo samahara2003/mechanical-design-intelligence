@@ -5,6 +5,7 @@ export interface ModelVersionRecord {
   readonly originalFilename: string;
   readonly cadSha256: string;
   readonly artifactStorageKey: string | null;
+  readonly sourceSizeBytes: number;
   readonly createdAt: string;
 }
 
@@ -17,6 +18,9 @@ export function createModelVersion(input: ModelVersionRecord): ModelVersionRecor
   }
   if (!/^[0-9a-f]{64}$/.test(input.cadSha256)) {
     throw new ModelVersionValidationError("CAD checksum must be lowercase SHA-256");
+  }
+  if (!Number.isSafeInteger(input.sourceSizeBytes) || input.sourceSizeBytes <= 0) {
+    throw new ModelVersionValidationError("source size must be a positive integer");
   }
   for (const [label, value] of [["ID", input.id], ["model ID", input.modelId], ["filename", input.originalFilename]] as const) {
     if (value.trim().length === 0) throw new ModelVersionValidationError(`${label} must be nonempty`);

@@ -1,6 +1,7 @@
 import { sql } from "drizzle-orm";
 import {
   char,
+  bigint,
   check,
   index,
   integer,
@@ -36,6 +37,7 @@ export const modelVersions = pgTable("model_versions", {
   originalFilename: text("original_filename").notNull(),
   cadSha256: char("cad_sha256", { length: 64 }).notNull(),
   artifactStorageKey: text("artifact_storage_key"),
+  sourceSizeBytes: bigint("source_size_bytes", { mode: "number" }).notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 }, (table) => [
   unique("model_versions_model_version_unique").on(table.modelId, table.versionNumber),
@@ -43,6 +45,24 @@ export const modelVersions = pgTable("model_versions", {
   check("model_versions_positive_version", sql`${table.versionNumber} > 0`),
   check("model_versions_filename_nonempty", sql`length(btrim(${table.originalFilename})) > 0`),
   check("model_versions_sha256_format", sql`${table.cadSha256} ~ '^[0-9a-f]{64}$'`),
+  check("model_versions_source_size_positive", sql`${table.sourceSizeBytes} > 0`),
+]);
+
+export const modelVersionUploads = pgTable("model_version_uploads", {
+  id: uuid("id").primaryKey(),
+  modelId: uuid("model_id").notNull().references(() => models.id, { onDelete: "cascade" }),
+  originalFilename: text("original_filename").notNull(),
+  expectedSizeBytes: bigint("expected_size_bytes", { mode: "number" }).notNull(),
+  expectedSha256: char("expected_sha256", { length: 64 }).notNull(),
+  objectKey: text("object_key").notNull().unique(),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+}, (table) => [
+  index("model_version_uploads_model_id_idx").on(table.modelId),
+  check("model_version_uploads_filename_nonempty", sql`length(btrim(${table.originalFilename})) > 0`),
+  check("model_version_uploads_size_positive", sql`${table.expectedSizeBytes} > 0`),
+  check("model_version_uploads_sha256_format", sql`${table.expectedSha256} ~ '^[0-9a-f]{64}$'`),
+  check("model_version_uploads_expiry_after_creation", sql`${table.expiresAt} > ${table.createdAt}`),
 ]);
 
 export const analyses = pgTable("analyses", {

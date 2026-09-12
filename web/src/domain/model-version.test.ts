@@ -15,6 +15,7 @@ test("ModelVersion is an immutable exact CAD revision", () => {
     originalFilename: "bracket.step",
     cadSha256: "a".repeat(64),
     artifactStorageKey: null,
+    sourceSizeBytes: 1024,
     createdAt: "2026-01-01T00:00:00.000Z",
   });
   assert.ok(Object.isFrozen(version));

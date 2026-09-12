@@ -1,0 +1,490 @@
+{
+  "id": "8841c6d9-38af-4436-91e3-091429635424",
+  "prevId": "a6146398-19cf-4dd7-8dd4-4902a8364621",
+  "version": "7",
+  "dialect": "postgresql",
+  "tables": {
+    "public.analyses": {
+      "name": "analyses",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "model_version_id": {
+          "name": "model_version_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "status": {
+          "name": "status",
+          "type": "analysis_status",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'draft'"
+        },
+        "engineering_definition": {
+          "name": "engineering_definition",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "definition_sha256": {
+          "name": "definition_sha256",
+          "type": "char(64)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "execution_started_at": {
+          "name": "execution_started_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {
+        "analyses_model_version_id_idx": {
+          "name": "analyses_model_version_id_idx",
+          "columns": [
+            {
+              "expression": "model_version_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "analyses_model_version_id_model_versions_id_fk": {
+          "name": "analyses_model_version_id_model_versions_id_fk",
+          "tableFrom": "analyses",
+          "tableTo": "model_versions",
+          "columnsFrom": [
+            "model_version_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "analyses_definition_object": {
+          "name": "analyses_definition_object",
+          "value": "jsonb_typeof(\"analyses\".\"engineering_definition\") = 'object'"
+        },
+        "analyses_sha256_format": {
+          "name": "analyses_sha256_format",
+          "value": "\"analyses\".\"definition_sha256\" is null or \"analyses\".\"definition_sha256\" ~ '^[0-9a-f]{64}$'"
+        },
+        "analyses_execution_lifecycle": {
+          "name": "analyses_execution_lifecycle",
+          "value": "(\"analyses\".\"status\" = 'draft' and \"analyses\".\"execution_started_at\" is null) or (\"analyses\".\"status\" <> 'draft' and \"analyses\".\"execution_started_at\" is not null and \"analyses\".\"definition_sha256\" is not null)"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.analysis_results": {
+      "name": "analysis_results",
+      "schema": "",
+      "columns": {
+        "analysis_id": {
+          "name": "analysis_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "result_summary": {
+          "name": "result_summary",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "provenance_summary": {
+          "name": "provenance_summary",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "analysis_results_analysis_id_analyses_id_fk": {
+          "name": "analysis_results_analysis_id_analyses_id_fk",
+          "tableFrom": "analysis_results",
+          "tableTo": "analyses",
+          "columnsFrom": [
+            "analysis_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "analysis_results_one_per_analysis": {
+          "name": "analysis_results_one_per_analysis",
+          "columns": [
+            "analysis_id"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "analysis_results_summary_object": {
+          "name": "analysis_results_summary_object",
+          "value": "jsonb_typeof(\"analysis_results\".\"result_summary\") = 'object'"
+        },
+        "analysis_results_provenance_object": {
+          "name": "analysis_results_provenance_object",
+          "value": "jsonb_typeof(\"analysis_results\".\"provenance_summary\") = 'object'"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.model_version_uploads": {
+      "name": "model_version_uploads",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "model_id": {
+          "name": "model_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "original_filename": {
+          "name": "original_filename",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "expected_size_bytes": {
+          "name": "expected_size_bytes",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "expected_sha256": {
+          "name": "expected_sha256",
+          "type": "char(64)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "object_key": {
+          "name": "object_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "expires_at": {
+          "name": "expires_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {
+        "model_version_uploads_model_id_idx": {
+          "name": "model_version_uploads_model_id_idx",
+          "columns": [
+            {
+              "expression": "model_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "model_version_uploads_model_id_models_id_fk": {
+          "name": "model_version_uploads_model_id_models_id_fk",
+          "tableFrom": "model_version_uploads",
+          "tableTo": "models",
+          "columnsFrom": [
+            "model_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "model_version_uploads_object_key_unique": {
+          "name": "model_version_uploads_object_key_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "object_key"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "model_version_uploads_filename_nonempty": {
+          "name": "model_version_uploads_filename_nonempty",
+          "value": "length(btrim(\"model_version_uploads\".\"original_filename\")) > 0"
+        },
+        "model_version_uploads_size_positive": {
+          "name": "model_version_uploads_size_positive",
+          "value": "\"model_version_uploads\".\"expected_size_bytes\" > 0"
+        },
+        "model_version_uploads_sha256_format": {
+          "name": "model_version_uploads_sha256_format",
+          "value": "\"model_version_uploads\".\"expected_sha256\" ~ '^[0-9a-f]{64}$'"
+        },
+        "model_version_uploads_expiry_after_creation": {
+          "name": "model_version_uploads_expiry_after_creation",
+          "value": "\"model_version_uploads\".\"expires_at\" > \"model_version_uploads\".\"created_at\""
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.model_versions": {
+      "name": "model_versions",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "model_id": {
+          "name": "model_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "version_number": {
+          "name": "version_number",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "original_filename": {
+          "name": "original_filename",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "cad_sha256": {
+          "name": "cad_sha256",
+          "type": "char(64)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "artifact_storage_key": {
+          "name": "artifact_storage_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "source_size_bytes": {
+          "name": "source_size_bytes",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "model_versions_model_id_idx": {
+          "name": "model_versions_model_id_idx",
+          "columns": [
+            {
+              "expression": "model_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "model_versions_model_id_models_id_fk": {
+          "name": "model_versions_model_id_models_id_fk",
+          "tableFrom": "model_versions",
+          "tableTo": "models",
+          "columnsFrom": [
+            "model_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "model_versions_model_version_unique": {
+          "name": "model_versions_model_version_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "model_id",
+            "version_number"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "model_versions_positive_version": {
+          "name": "model_versions_positive_version",
+          "value": "\"model_versions\".\"version_number\" > 0"
+        },
+        "model_versions_filename_nonempty": {
+          "name": "model_versions_filename_nonempty",
+          "value": "length(btrim(\"model_versions\".\"original_filename\")) > 0"
+        },
+        "model_versions_sha256_format": {
+          "name": "model_versions_sha256_format",
+          "value": "\"model_versions\".\"cad_sha256\" ~ '^[0-9a-f]{64}$'"
+        },
+        "model_versions_source_size_positive": {
+          "name": "model_versions_source_size_positive",
+          "value": "\"model_versions\".\"source_size_bytes\" > 0"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.models": {
+      "name": "models",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "models_name_nonempty": {
+          "name": "models_name_nonempty",
+          "value": "length(btrim(\"models\".\"name\")) > 0"
+        }
+      },
+      "isRLSEnabled": false
+    }
+  },
+  "enums": {
+    "public.analysis_status": {
+      "name": "analysis_status",
+      "schema": "public",
+      "values": [
+        "draft",
+        "queued",
+        "running",
+        "completed",
+        "failed",
+        "canceled"
+      ]
+    }
+  },
+  "schemas": {},
+  "sequences": {},
+  "roles": {},
+  "policies": {},
+  "views": {},
+  "_meta": {
+    "columns": {},
+    "schemas": {},
+    "tables": {}
+  }
+}

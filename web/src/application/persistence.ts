@@ -32,6 +32,7 @@ export async function createModelVersionMetadata(
     originalFilename: string;
     cadSha256: string;
     artifactStorageKey?: string | null;
+    sourceSizeBytes: number;
   },
 ) {
   if (!Number.isInteger(input.versionNumber) || input.versionNumber <= 0) {

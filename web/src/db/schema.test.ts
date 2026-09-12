@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 const migrationUrl = new URL("../../drizzle/0000_web_foundation.sql", import.meta.url);
+const uploadMigrationUrl = new URL("../../drizzle/0001_model_version_uploads.sql", import.meta.url);
 
 test("migration enforces one immutable final result per Analysis", async () => {
   const sql = await readFile(migrationUrl, "utf8");
@@ -27,4 +28,12 @@ test("migration lists only the supported Analysis transitions", async () => {
   ]) {
     assert.ok(sql.includes(transition));
   }
+});
+
+test("upload migration separates incomplete uploads from immutable ModelVersions", async () => {
+  const sql = await readFile(uploadMigrationUrl, "utf8");
+  assert.match(sql, /CREATE TABLE "model_version_uploads"/);
+  assert.match(sql, /ALTER TABLE "model_versions" ADD COLUMN "source_size_bytes" bigint NOT NULL/);
+  assert.match(sql, /model_version_uploads_sha256_format/);
+  assert.match(sql, /model_version_uploads_expiry_after_creation/);
 });
