@@ -14,12 +14,12 @@ from analysis_provenance import (
     build_analysis_provenance,
 )
 from analysis_results import (
+    AnalysisResult,
     ResolvedAnalysisContext,
     analysis_result_to_dict,
     build_analysis_result,
 )
 from bracket_assessment import build_bracket_assessment
-from engineering_assessment import engineering_assessment_to_dict
 from bracket_definition import (
     BASELINE_MESH_SIZE_M,
     BRACKET_FORCE,
@@ -27,8 +27,19 @@ from bracket_definition import (
     FINER_MESH_SIZE_M,
     bracket_analysis_definition,
 )
+from bracket_quantities import LOAD_PAD_AVERAGE_UX, LOAD_PAD_UX_REFINEMENT_POLICY
 from calculix_results import CalculixResultParseError, parse_calculix_dat
+from engineering_assessment import engineering_assessment_to_dict
 from engineering_domain import analysis_definition_to_dict
+from engineering_quantities import (
+    QuantityEvaluation,
+    compare_mesh_refinement,
+    compare_raw_stress_diagnostic,
+    evaluate_regional_displacement,
+    mesh_refinement_comparison_to_dict,
+    quantity_evaluation_to_dict,
+    raw_stress_diagnostic_to_dict,
+)
 from generate_bracket_mesh import (
     BASE_LENGTH_M,
     BASE_THICKNESS_M,
@@ -157,7 +168,7 @@ def classify_stress_location(location: tuple[float, float, float]) -> str:
 
 def analyze_level(
     repository: Path, root: Path, name: str, mesh_size: float, step_path: Path
-) -> dict:
+) -> tuple[dict, QuantityEvaluation, AnalysisResult]:
     scripts = repository / "scripts"
     output_dir = root / name
     mesh, mesh_runtime = run_json(
@@ -219,15 +230,30 @@ def analyze_level(
         gmsh_version=mesh["gmsh_version"],
         calculix_version=solve["ccx_version"],
     )
+    quantity_evaluation = evaluate_regional_displacement(
+        LOAD_PAD_AVERAGE_UX,
+        definition,
+        result,
+        numerical,
+        resolved_region_identity="gmsh_physical_surface:load_pad",
+        mesh_identity=f"sha256:{provenance.mesh.sha256}",
+        faces=load_faces,
+        node_coordinates_m=nodes,
+    )
+    if not math.isclose(quantity_evaluation.value, qoi[0], rel_tol=0.0, abs_tol=1e-15):
+        raise BracketVerificationError(
+            "reusable QoI evaluation differs from existing integration"
+        )
     peak = result.stress.global_raw_max_von_mises
     peak_location = peak.location_m.as_tuple() if peak.location_m else None
-    return {
+    record = {
         "level": name,
         "analysis_definition": analysis_definition_to_dict(definition),
         "analysis_result": analysis_result_to_dict(result),
         "engineering_assessment": engineering_assessment_to_dict(
             build_bracket_assessment(result)
         ),
+        "quantity_evaluation": quantity_evaluation_to_dict(quantity_evaluation),
         "analysis_provenance": analysis_provenance_to_dict(provenance),
         "mesh_quality": mesh["quality"],
         "gmsh_warnings": mesh["gmsh_warnings"],
@@ -248,6 +274,7 @@ def analyze_level(
         "fixed_node_maximum_displacement_m": solve["sanity"]["maximum_fixed_node_displacement_m"],
         "runtimes_seconds": {"mesh": mesh_runtime, "solve": solve_runtime},
     }
+    return record, quantity_evaluation, result
 
 
 def main() -> int:
@@ -257,23 +284,33 @@ def main() -> int:
     started = time.perf_counter()
     try:
         step_path.unlink(missing_ok=True)
-        levels = [analyze_level(repository, root, name, size, step_path) for name, size in LEVELS]
+        analyzed = [
+            analyze_level(repository, root, name, size, step_path)
+            for name, size in LEVELS
+        ]
+        levels = [item[0] for item in analyzed]
+        evaluations = [item[1] for item in analyzed]
+        results = [item[2] for item in analyzed]
         baseline, finer = levels
-        base_qoi = baseline["load_pad_area_average_displacement_qoi"]["value_m"][0]
-        fine_qoi = finer["load_pad_area_average_displacement_qoi"]["value_m"][0]
-        base_stress = baseline["analysis_result"]["stress_summary"]["global_raw_max_von_mises"]["von_mises_pa"]
-        fine_stress = finer["analysis_result"]["stress_summary"]["global_raw_max_von_mises"]["von_mises_pa"]
+        refinement = compare_mesh_refinement(
+            evaluations[0], evaluations[1], LOAD_PAD_UX_REFINEMENT_POLICY
+        )
+        stress_diagnostic = compare_raw_stress_diagnostic(results[0], results[1])
+        base_qoi = refinement.reference.value
+        fine_qoi = refinement.refined.value
+        base_stress = stress_diagnostic.reference.von_mises_pa
+        fine_stress = stress_diagnostic.refined.von_mises_pa
         sensitivity = {
             "displacement_qoi": {
                 "quantity": "area-average UX over load_pad face",
                 "baseline_m": base_qoi, "finer_m": fine_qoi,
-                "absolute_change_m": abs(fine_qoi-base_qoi),
-                "relative_change": abs(fine_qoi-base_qoi)/abs(base_qoi),
+                "absolute_change_m": refinement.absolute_change,
+                "relative_change": refinement.relative_change,
             },
             "global_raw_von_mises": {
                 "baseline_pa": base_stress, "finer_pa": fine_stress,
-                "absolute_change_pa": abs(fine_stress-base_stress),
-                "relative_change": abs(fine_stress-base_stress)/abs(base_stress),
+                "absolute_change_pa": stress_diagnostic.absolute_change_pa,
+                "relative_change": stress_diagnostic.relative_change,
                 "interpretation": "diagnostic sensitivity only; no critical-stress or convergence policy",
             },
             "equilibrium_residual_magnitude_n": [
@@ -300,6 +337,10 @@ def main() -> int:
                 "selection": "named STEP faces re-identified after import by dimensional bounding boxes and exact-count checks",
             },
             "levels": levels,
+            "mesh_refinement_comparison": mesh_refinement_comparison_to_dict(refinement),
+            "raw_stress_refinement_diagnostic": raw_stress_diagnostic_to_dict(
+                stress_diagnostic
+            ),
             "mesh_sensitivity": sensitivity,
             "engineering_review": {
                 "deformation": "positive load-pad UX and coupled downward bending are mechanically plausible for the eccentric +X load",

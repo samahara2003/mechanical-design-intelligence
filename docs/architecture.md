@@ -173,6 +173,16 @@ Production factor of safety and pass/fail remain deferred because the relevant-s
 
 The controlled bracket is the first consumer. Its global raw von Mises peak remains `diagnostic_only`, with explicit warnings that it is not automatically design-critical, stress convergence has not been demonstrated, and the peak is affected by proximity to the simplified fixed mounting boundary. No factor of safety, yield comparison, structural pass/fail, generic QoI, or generic singularity detector is part of this layer. Python remains authoritative for the assessment; persistence and TypeScript expose its immutable serialized output without reinterpreting it.
 
+### First quantity-of-interest and mesh-refinement boundary
+
+`QuantityOfInterest` V1 is a small immutable engineering-intent object for regional displacement only. It records a stable ID/name, named `GeometrySelection`, displacement component (`UX`, `UY`, `UZ`, or magnitude), average/maximum aggregation, and metres. It contains no mesh node or element IDs. The first real quantity, `load_pad_average_ux`, targets the controlled bracket's existing named `load_pad` face.
+
+Mesh-specific face/node resolution remains transient numerical mapping. `QuantityEvaluation` combines the immutable quantity with its scalar result, the resolved physical-group identity, evaluation method, model-version reference, a mesh identity/summary, integrated area, and a deterministic fingerprint of the non-size analysis configuration. For the current C3D10 face average, the evaluator uses the same three midside-point surface rule as the established bracket integration; it is exact for each quadratic displacement component on the straight triangular faces. Regional maxima are explicitly resolved-surface nodal maxima rather than an unsupported continuous-element extremum claim.
+
+`MeshRefinementComparison` accepts only the same quantity, model version, resolved region, units, and analysis configuration, with a smaller characteristic size for the refined evaluation. Its named policy contains both the relative-change tolerance and a minimum meaningful reference magnitude. Below that magnitude the relative change is `null` and status is `relative_change_not_applicable`; otherwise status is `within_tolerance` or `outside_tolerance`. Scope is always `mesh_refinement_comparison_only`. This is a deterministic two-level comparison, not a general convergence framework or a claim that convergence has been demonstrated.
+
+The controlled bracket policy `controlled_bracket_load_pad_average_ux/1` uses a case-specific `1%` relative-change tolerance and `1e-12 m` minimum reference magnitude. These values are verification policy for this fixture only, not a universal FEA rule. The parallel raw integration-point von Mises change is serialized separately as `diagnostic_only`, with no tolerance or decision status.
+
 ### Spike constraints
 
 The spike does not include a web UI, API product surface, database, authentication, cloud deployment, durable queue, SSE, AI review, distributed execution, production infrastructure, or DFM functionality. It must not introduce a custom finite element solver or speculative infrastructure.
