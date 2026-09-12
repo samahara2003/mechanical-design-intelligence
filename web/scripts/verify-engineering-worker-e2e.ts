@@ -146,6 +146,21 @@ try {
   assert.ok(result.resultSummary.mesh_summary.node_count > 0);
   assert.ok(result.resultSummary.displacement_summary.global_maximum_magnitude_m > 0);
   assert.ok((result.resultSummary.stress_summary.global_raw_max_von_mises as { von_mises_pa: number }).von_mises_pa > 0);
+  assert.equal(result.assessmentSummary?.assessment_version, "engineering-assessment/1");
+  assert.equal(result.assessmentSummary?.equilibrium_assessment.status, "within_tolerance");
+  assert.equal(
+    result.assessmentSummary?.equilibrium_assessment.scope,
+    "numerical_consistency_only",
+  );
+  assert.equal(result.assessmentSummary?.stress_evidence.interpretation, "diagnostic_only");
+  const assessmentWarningCodes = new Set(
+    result.assessmentSummary?.warnings.map((warning) => warning.code),
+  );
+  for (const code of [
+    "global_raw_stress_diagnostic_only",
+    "stress_convergence_not_demonstrated",
+    "fixed_boundary_peak_influence",
+  ]) assert.ok(assessmentWarningCodes.has(code));
   assert.equal(result.provenanceSummary.analysis_definition_sha256, authoritative.fingerprint);
   const provenanceArtifacts = result.provenanceSummary.artifacts as Record<string, {
     sha256: string; byte_size: number; storage_key: string;
@@ -213,6 +228,7 @@ try {
     analysisCompleted: true,
     exactStepHashVerifiedByWorker: true,
     compactResultPersisted: true,
+    deterministicAssessmentPersisted: true,
     provenanceReferencesConsumedStep: true,
     generatedPrivateArtifactsVerified: 4,
     expiredClaimReclaimed: true,

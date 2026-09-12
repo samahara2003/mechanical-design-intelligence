@@ -151,6 +151,9 @@ Engineering Evidence Builder
   AnalysisResult
         |
         v
+EngineeringAssessment
+        |
+        v
 future UI / reports / AI review
 ```
 
@@ -165,6 +168,10 @@ The stress summary selects the exact largest von Mises value calculated from raw
 The result serializer emits stable JSON-compatible fields with explicit SI-unit names and no solver-file syntax. `AnalysisProvenance` links the compact result's execution to exact artifacts without embedding raw numerical fields or inventing storage IDs. Local paths may aid debugging but are not durable engineering identity.
 
 Production factor of safety and pass/fail remain deferred because the relevant-stress selection policy is unresolved. In both current consumers, the global peak lies in the perturbed support region. It is not substituted for the axial interior analytical comparison or the cantilever's predeclared `x = 0.2 m` reconstructed beam-stress QoI. Axial `F/A`/strain references and cantilever Euler-Bernoulli displacement/section reconstruction remain benchmark-specific. Future UI, reports, persistence, regression tools, and AI review may consume `AnalysisResult`; AI remains downstream and cannot alter deterministic evidence or determine acceptance.
+
+`EngineeringAssessment` is the first immutable, solver-neutral interpretation layer above `AnalysisResult`. Its versioned builder copies the global displacement and raw integration-point stress evidence, evaluates force-resultant consistency using an explicit named policy, and attaches structured assumptions and warnings supplied by a controlled engineering context. The force policy serializes both relative and absolute tolerances and uses `max(absolute tolerance, relative tolerance * max(norm(applied), norm(reaction)))`; this remains defined at zero and near-zero load. Scope is separately fixed as `numerical_consistency_only`, while status reports the tolerance result as `within_tolerance` or `outside_tolerance`; neither represents structural adequacy. When the reference resultant is at or below the policy's explicit minimum meaningful reference force, relative residual is unavailable and the absolute tolerance floor still governs the check.
+
+The controlled bracket is the first consumer. Its global raw von Mises peak remains `diagnostic_only`, with explicit warnings that it is not automatically design-critical, stress convergence has not been demonstrated, and the peak is affected by proximity to the simplified fixed mounting boundary. No factor of safety, yield comparison, structural pass/fail, generic QoI, or generic singularity detector is part of this layer. Python remains authoritative for the assessment; persistence and TypeScript expose its immutable serialized output without reinterpreting it.
 
 ### Spike constraints
 
@@ -186,7 +193,7 @@ Upload intent is staged in `model_version_uploads`, not represented as a ready g
 
 The implemented lifecycle is `draft -> queued`, `queued -> running|canceled`, and `running -> completed|failed|canceled`. Completed, failed, and canceled states are terminal. Application functions validate transitions and use expected-status predicates so concurrent stale mutations fail. A draft edit clears its prior fingerprint. Queueing atomically records the authoritative fingerprint and then performs a conditional transition; leaving draft records `execution_started_at`. PostgreSQL checks and an update trigger independently enforce the same transition graph and prevent model-version, definition, or fingerprint changes while leaving or after leaving draft.
 
-`analysis_results` contains only the compact reusable result summary and provenance summary as typed `jsonb`; full nodal and integration-point fields remain outside PostgreSQL. `analysis_id` is its primary key, enforcing one final result per analysis. Insert is permitted only for a completed analysis, and an update trigger makes the final row immutable. Creation of a changed configuration after execution is represented by a new draft `Analysis`, never an edit to execution history.
+`analysis_results` contains the compact reusable result summary, an additive deterministic assessment summary, and provenance summary as typed `jsonb`; full nodal and integration-point fields remain outside PostgreSQL. The assessment column is nullable only for compatibility with historical completed rows; Worker V0 always publishes it with new controlled-bracket results. `analysis_id` is its primary key, enforcing one final result per analysis. Insert is permitted only for a completed analysis, and an update trigger makes the final row immutable. Creation of a changed configuration after execution is represented by a new draft `Analysis`, never an edit to execution history.
 
 The checked-in SQL migrations contain constraints and triggers that Drizzle's table declaration cannot express alone. A configured PostgreSQL instance is still required before applying them. User ownership and deployment topology remain deferred.
 
@@ -198,7 +205,7 @@ The Python worker claims one queued job, or one expired claim, using `FOR UPDATE
 
 Worker V0 is deliberately restricted to the proven baseline mounting bracket: named `bracket`, `mounting_holes`, and `load_pad` regions, its fixed material/load/boundary definition, C3D10 at `0.006 m`, and the configured Gmsh/CalculiX versions. Named regions are still recovered after STEP import with the existing dimensional checks. Arbitrary uploaded CAD and persistent topology identity remain unsupported.
 
-The worker streams the private ModelVersion STEP from R2 and recomputes SHA-256 and byte size before Gmsh can run. This worker hash is compared with the upload integrity metadata and becomes provenance for the exact consumed STEP. Generated mesh, CalculiX input, DAT, and FRD are uploaded directly under immutable server-owned keys `analyses/{analysisId}/attempts/{claimToken}/{role}.{suffix}`. A reclaimed attempt therefore never overwrites or conflicts with earlier run-varying bytes. Only the successfully fenced attempt's exact keys and hashes enter persisted provenance. A stale attempt may leave private orphan objects; automated cleanup is deferred. The compact solver-neutral `AnalysisResult` and path-free `AnalysisProvenance` summary are stored in PostgreSQL, while full artifacts remain private in R2.
+The worker streams the private ModelVersion STEP from R2 and recomputes SHA-256 and byte size before Gmsh can run. This worker hash is compared with the upload integrity metadata and becomes provenance for the exact consumed STEP. Generated mesh, CalculiX input, DAT, and FRD are uploaded directly under immutable server-owned keys `analyses/{analysisId}/attempts/{claimToken}/{role}.{suffix}`. A reclaimed attempt therefore never overwrites or conflicts with earlier run-varying bytes. Only the successfully fenced attempt's exact keys and hashes enter persisted provenance. A stale attempt may leave private orphan objects; automated cleanup is deferred. The compact solver-neutral `AnalysisResult`, deterministic `EngineeringAssessment`, and path-free `AnalysisProvenance` summary are stored atomically in PostgreSQL, while full artifacts remain private in R2.
 
 ## 3. Planned future system architecture
 

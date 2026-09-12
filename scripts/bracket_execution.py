@@ -10,6 +10,7 @@ from pathlib import Path
 
 from analysis_provenance import AnalysisProvenance, build_analysis_provenance
 from analysis_results import AnalysisResult, ResolvedAnalysisContext, build_analysis_result
+from bracket_assessment import build_bracket_assessment
 from bracket_definition import (
     BASELINE_MESH_SIZE_M,
     BRACKET_FIXED_BOUNDARY,
@@ -19,6 +20,7 @@ from bracket_definition import (
 from bracket_verification import GAUSS_NATURAL_COORDINATES, interpolate_coordinates
 from calculix_results import parse_calculix_dat
 from engineering_domain import AnalysisDefinition, MeshElementType
+from engineering_assessment import EngineeringAssessment
 from numerical_results import Vector3
 from run_bracket_solve import execute_bracket_solve
 from run_cantilever_solve import as_calculix_c3d10, read_msh
@@ -31,6 +33,7 @@ class ControlledBracketError(RuntimeError):
 @dataclass(frozen=True)
 class BracketExecution:
     result: AnalysisResult
+    assessment: EngineeringAssessment
     provenance: AnalysisProvenance
     generated_artifacts: dict[str, Path]
     mesh_summary: dict
@@ -138,6 +141,7 @@ def execute_controlled_bracket(
     )
     return BracketExecution(
         result=result,
+        assessment=build_bracket_assessment(result),
         provenance=provenance,
         generated_artifacts={
             "mesh": mesh_path,

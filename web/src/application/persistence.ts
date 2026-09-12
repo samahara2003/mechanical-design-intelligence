@@ -14,6 +14,7 @@ import {
 import type {
   AnalysisProvenanceSummary,
   AnalysisResultSummary,
+  EngineeringAssessmentSummary,
 } from "../domain/result-contract.ts";
 import * as schema from "../db/schema.ts";
 
@@ -153,10 +154,11 @@ export async function createFinalAnalysisResult(
   db: MdiDatabase,
   analysisId: string,
   resultSummary: AnalysisResultSummary,
+  assessmentSummary: EngineeringAssessmentSummary,
   provenanceSummary: AnalysisProvenanceSummary,
 ) {
   const [created] = await db.insert(schema.analysisResults).values({
-    analysisId, resultSummary, provenanceSummary,
+    analysisId, resultSummary, assessmentSummary, provenanceSummary,
   }).returning();
   return created;
 }

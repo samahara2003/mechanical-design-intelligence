@@ -79,7 +79,8 @@ class FakeFinalizationCursor:
                 raise AssertionError("duplicate result")
             self.connection.result = {
                 "result": parameters[1].obj,
-                "provenance": parameters[2].obj,
+                "assessment": parameters[2].obj,
+                "provenance": parameters[3].obj,
             }
             return
         if sql.startswith("UPDATE analysis_jobs"):
@@ -181,20 +182,27 @@ class EngineeringWorkerLogicTests(unittest.TestCase):
         }
         connection = FakeFinalizationConnection(current)
         winning_result = {"attempt": attempt_b}
+        winning_assessment = {"assessment_version": "engineering-assessment/1"}
         winning_provenance = {
             "artifacts": {"solver_frd": {"storage_key": key_b, "sha256": sha_b}}
         }
         finalize_success(
-            connection, claimed(analysis_id, attempt_b), winning_result, winning_provenance
+            connection,
+            claimed(analysis_id, attempt_b),
+            winning_result,
+            winning_assessment,
+            winning_provenance,
         )
         with self.assertRaises(WorkerStateError):
             finalize_success(
                 connection,
                 claimed(analysis_id, attempt_a),
                 {"attempt": attempt_a},
+                {"assessment_version": "engineering-assessment/1"},
                 {"artifacts": {"solver_frd": {"storage_key": key_a, "sha256": sha_a}}},
             )
         self.assertEqual(connection.result["result"], winning_result)
+        self.assertEqual(connection.result["assessment"], winning_assessment)
         self.assertEqual(connection.result["provenance"], winning_provenance)
         self.assertNotIn(key_a, str(connection.result))
         self.assertEqual(client.objects[key_a]["metadata"]["claim-token"], attempt_a)

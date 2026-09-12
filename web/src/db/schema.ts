@@ -17,7 +17,11 @@ import {
 
 import type { EngineeringDefinition } from "../domain/engineering-definition.ts";
 import type { AnalysisStatus } from "../domain/analysis-lifecycle.ts";
-import type { AnalysisProvenanceSummary, AnalysisResultSummary } from "../domain/result-contract.ts";
+import type {
+  AnalysisProvenanceSummary,
+  AnalysisResultSummary,
+  EngineeringAssessmentSummary,
+} from "../domain/result-contract.ts";
 
 export const analysisStatus = pgEnum("analysis_status", [
   "draft", "queued", "running", "completed", "failed", "canceled",
@@ -110,10 +114,12 @@ export const analysisJobs = pgTable("analysis_jobs", {
 export const analysisResults = pgTable("analysis_results", {
   analysisId: uuid("analysis_id").notNull().references(() => analyses.id, { onDelete: "restrict" }),
   resultSummary: jsonb("result_summary").$type<AnalysisResultSummary>().notNull(),
+  assessmentSummary: jsonb("assessment_summary").$type<EngineeringAssessmentSummary>(),
   provenanceSummary: jsonb("provenance_summary").$type<AnalysisProvenanceSummary>().notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 }, (table) => [
   primaryKey({ name: "analysis_results_one_per_analysis", columns: [table.analysisId] }),
   check("analysis_results_summary_object", sql`jsonb_typeof(${table.resultSummary}) = 'object'`),
+  check("analysis_results_assessment_object", sql`${table.assessmentSummary} is null or jsonb_typeof(${table.assessmentSummary}) = 'object'`),
   check("analysis_results_provenance_object", sql`jsonb_typeof(${table.provenanceSummary}) = 'object'`),
 ]);

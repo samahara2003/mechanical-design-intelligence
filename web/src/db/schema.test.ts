@@ -5,6 +5,7 @@ import test from "node:test";
 const migrationUrl = new URL("../../drizzle/0000_web_foundation.sql", import.meta.url);
 const uploadMigrationUrl = new URL("../../drizzle/0001_model_version_uploads.sql", import.meta.url);
 const workerMigrationUrl = new URL("../../drizzle/0002_analysis_jobs.sql", import.meta.url);
+const assessmentMigrationUrl = new URL("../../drizzle/0003_engineering_assessment.sql", import.meta.url);
 
 test("migration enforces one immutable final result per Analysis", async () => {
   const sql = await readFile(migrationUrl, "utf8");
@@ -46,4 +47,11 @@ test("worker migration provides one lease-fenced job per Analysis", async () => 
   assert.match(sql, /analysis_jobs_state_consistency/);
   assert.match(sql, /claim_token/);
   assert.match(sql, /lease_expires_at/);
+});
+
+test("assessment migration additively stores a checked JSON object", async () => {
+  const sql = await readFile(assessmentMigrationUrl, "utf8");
+  assert.match(sql, /ADD COLUMN "assessment_summary" jsonb/);
+  assert.match(sql, /analysis_results_assessment_object/);
+  assert.match(sql, /assessment_summary.*is null or jsonb_typeof/);
 });

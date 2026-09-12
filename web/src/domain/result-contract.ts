@@ -33,3 +33,28 @@ export interface AnalysisProvenanceSummary {
   readonly tools: Readonly<Record<string, unknown>>;
   readonly postprocessor: Readonly<{ identifier: string; version: string }>;
 }
+
+export interface EngineeringAssessmentSummary {
+  readonly assessment_version: "engineering-assessment/1";
+  readonly unit_system: "SI";
+  readonly equilibrium_assessment: {
+    readonly scope: "numerical_consistency_only";
+    readonly applied_force_n: Vector3Tuple;
+    readonly reaction_force_n: Vector3Tuple;
+    readonly residual_force_n: Vector3Tuple;
+    readonly residual_magnitude_n: number;
+    readonly relative_residual: number | null;
+    readonly reference_force_magnitude_n: number;
+    readonly allowable_residual_magnitude_n: number;
+    readonly governing_tolerance: "absolute" | "relative";
+    readonly status: "within_tolerance" | "outside_tolerance";
+    readonly policy: Readonly<Record<string, unknown>>;
+  };
+  readonly displacement_evidence: Readonly<Record<string, unknown>>;
+  readonly stress_evidence: Readonly<{
+    interpretation: "diagnostic_only";
+    [key: string]: unknown;
+  }>;
+  readonly assumptions: readonly Readonly<{ code: string; message: string }>[];
+  readonly warnings: readonly Readonly<{ code: string; message: string }>[];
+}

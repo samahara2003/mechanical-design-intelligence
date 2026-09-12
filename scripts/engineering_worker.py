@@ -22,6 +22,7 @@ from analysis_provenance import (
     analysis_provenance_to_dict,
 )
 from analysis_results import analysis_result_to_dict
+from engineering_assessment import engineering_assessment_to_dict
 from bracket_execution import execute_controlled_bracket, validate_controlled_bracket_definition
 from engineering_domain import analysis_definition_from_dict
 from worker_storage import PrivateWorkerStorage
@@ -156,6 +157,7 @@ def finalize_success(
     connection: psycopg.Connection,
     claim: ClaimedAnalysis,
     result_summary: dict,
+    assessment_summary: dict,
     provenance_summary: dict,
 ) -> None:
     """Fence stale claims and atomically publish result plus terminal states."""
@@ -178,10 +180,16 @@ def finalize_success(
             raise WorkerStateError("Analysis completion lost a lifecycle race")
         cursor.execute(
             """
-            INSERT INTO analysis_results (analysis_id, result_summary, provenance_summary)
-            VALUES (%s, %s, %s)
+            INSERT INTO analysis_results
+                (analysis_id, result_summary, assessment_summary, provenance_summary)
+            VALUES (%s, %s, %s, %s)
             """,
-            (claim.analysis_id, Jsonb(result_summary), Jsonb(provenance_summary)),
+            (
+                claim.analysis_id,
+                Jsonb(result_summary),
+                Jsonb(assessment_summary),
+                Jsonb(provenance_summary),
+            ),
         )
         cursor.execute(
             """
@@ -280,6 +288,7 @@ def run_claim(
         phase = "engineering_execution"
         execution = execute_controlled_bracket(repository, step_path, run_dir, definition)
         result_summary = analysis_result_to_dict(execution.result)
+        assessment_summary = engineering_assessment_to_dict(execution.assessment)
         provenance_summary = analysis_provenance_to_dict(
             execution.provenance, include_local_paths=False
         )
@@ -294,7 +303,9 @@ def run_claim(
         for role, evidence in uploaded.items():
             provenance_summary["artifacts"][role]["storage_key"] = evidence["storage_key"]
         phase = "durable_finalization"
-        finalize_success(connection, claim, result_summary, provenance_summary)
+        finalize_success(
+            connection, claim, result_summary, assessment_summary, provenance_summary
+        )
         return {
             "status": "completed",
             "analysis_id": claim.analysis_id,

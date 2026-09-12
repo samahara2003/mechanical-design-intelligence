@@ -18,6 +18,8 @@ from analysis_results import (
     analysis_result_to_dict,
     build_analysis_result,
 )
+from bracket_assessment import build_bracket_assessment
+from engineering_assessment import engineering_assessment_to_dict
 from bracket_definition import (
     BASELINE_MESH_SIZE_M,
     BRACKET_FORCE,
@@ -223,6 +225,9 @@ def analyze_level(
         "level": name,
         "analysis_definition": analysis_definition_to_dict(definition),
         "analysis_result": analysis_result_to_dict(result),
+        "engineering_assessment": engineering_assessment_to_dict(
+            build_bracket_assessment(result)
+        ),
         "analysis_provenance": analysis_provenance_to_dict(provenance),
         "mesh_quality": mesh["quality"],
         "gmsh_warnings": mesh["gmsh_warnings"],
