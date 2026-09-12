@@ -4,3 +4,11 @@ artifacts/
 # Python bytecode
 __pycache__/
 *.py[cod]
+
+# Web application local/build state
+web/node_modules/
+web/.next/
+web/.env*
+!web/.env.example
+web/coverage/
+web/*.tsbuildinfo

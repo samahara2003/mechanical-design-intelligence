@@ -172,7 +172,21 @@ The spike does not include a web UI, API product surface, database, authenticati
 
 No production package layout, command-line interface, persistence schema, artifact-storage format, or process-orchestration design has yet been selected. Those choices should be made only when implementing the relevant milestone and should remain as simple as its demonstrated requirements allow.
 
-## 2. Planned future system architecture
+## 2. Web application V0 persistence foundation
+
+The first Web App slice is contained in `web/` and uses the Next.js App Router, React, TypeScript, Drizzle ORM, and PostgreSQL. It introduces only application/domain persistence for `Model`, immutable `ModelVersion`, lifecycle-controlled `Analysis`, and one immutable final `AnalysisResult` per analysis. It does not invoke the Engineering Core, run Gmsh or CalculiX, upload artifacts, or implement queues, workers, SSE, authentication, AI, or visualization.
+
+`ModelVersion` records one exact geometry revision through a parent model, positive version number, original filename, CAD SHA-256, and an optional future storage key. A database trigger rejects every update to a model-version row; changed geometry therefore requires a new row. The storage key is metadata only and no object-storage implementation exists.
+
+`Analysis.engineering_definition` is PostgreSQL `jsonb` with an explicit TypeScript contract matching the keys and meaning emitted by Python `analysis_definition_to_dict`: SI unit system, model-version reference, snapshotted isotropic material, geometry-selected force/pressure loads, geometry-selected translational constraints, resolved C3D10 mesh configuration, CalculiX configuration, and optional required FoS. It never contains mesh node or element IDs. TypeScript validation mirrors the obvious Python domain constraints, but Python remains the engineering authority. The web application can calculate a deterministic draft fingerprint for change detection; because Python and JavaScript number-to-JSON formatting is not assumed byte-identical, only the Python Engineering Core fingerprint is accepted as the authoritative execution fingerprint.
+
+The implemented lifecycle is `draft -> queued`, `queued -> running|canceled`, and `running -> completed|failed|canceled`. Completed, failed, and canceled states are terminal. Application functions validate transitions and use expected-status predicates so concurrent stale mutations fail. A draft edit clears its prior fingerprint. Queueing atomically records the authoritative fingerprint and then performs a conditional transition; leaving draft records `execution_started_at`. PostgreSQL checks and an update trigger independently enforce the same transition graph and prevent model-version, definition, or fingerprint changes while leaving or after leaving draft.
+
+`analysis_results` contains only the compact reusable result summary and provenance summary as typed `jsonb`; full nodal and integration-point fields remain outside PostgreSQL. `analysis_id` is its primary key, enforcing one final result per analysis. Insert is permitted only for a completed analysis, and an update trigger makes the final row immutable. Creation of a changed configuration after execution is represented by a new draft `Analysis`, never an edit to execution history.
+
+The checked-in SQL migration contains constraints and triggers that Drizzle's table declaration cannot express alone. A configured PostgreSQL instance is still required before applying it. No queue semantics, execution idempotency, cancellation race handling, artifact persistence, user ownership, or deployment topology is implemented in V0.
+
+## 3. Planned future system architecture
 
 The intended conceptual flow is:
 

@@ -1,0 +1,31 @@
+{
+  "name": "mdi-web",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "typecheck": "tsc --noEmit",
+    "test": "node --experimental-strip-types --test --experimental-test-isolation=none src/**/*.test.ts",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "drizzle-kit migrate",
+    "db:verify": "node scripts/verify-database-invariants.mjs"
+  },
+  "dependencies": {
+    "drizzle-orm": "0.45.2",
+    "next": "16.3.5",
+    "pg": "8.16.3",
+    "react": "19.3.0",
+    "react-dom": "19.3.0"
+  },
+  "devDependencies": {
+    "@types/node": "24.10.1",
+    "@types/pg": "8.15.6",
+    "@types/react": "19.2.2",
+    "@types/react-dom": "19.2.2",
+    "drizzle-kit": "0.31.10",
+    "typescript": "7.0.2"
+  }
+}
