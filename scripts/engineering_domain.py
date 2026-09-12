@@ -10,7 +10,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 from enum import Enum
-from typing import TypeAlias
+from typing import Any, Mapping, TypeAlias
 
 
 def _required_text(value: str, field_name: str) -> str:
@@ -343,3 +343,122 @@ def analysis_definition_to_dict(definition: AnalysisDefinition) -> dict:
         },
         "required_factor_of_safety": definition.required_factor_of_safety,
     }
+
+
+def analysis_definition_from_dict(value: Mapping[str, Any]) -> AnalysisDefinition:
+    """Reconstruct and validate the exact persisted V1 engineering definition."""
+    if not isinstance(value, Mapping) or value.get("unit_system") != "SI":
+        raise ValueError("analysis definition must be an SI mapping")
+
+    def scalar(record: Mapping[str, Any], name: str) -> float:
+        item = record.get(name)
+        if isinstance(item, bool) or not isinstance(item, (int, float)):
+            raise ValueError(f"{name} must be numeric")
+        return float(item)
+
+    def optional_scalar(record: Mapping[str, Any], name: str) -> float | None:
+        return None if record.get(name) is None else scalar(record, name)
+
+    def selection(record: Any) -> GeometrySelection:
+        if not isinstance(record, Mapping):
+            raise ValueError("geometry selection must be a mapping")
+        return GeometrySelection(record.get("region_name"), GeometryEntity(record.get("entity")))
+
+    material_record = value.get("material_snapshot")
+    if not isinstance(material_record, Mapping):
+        raise ValueError("material_snapshot must be a mapping")
+    source_record = material_record.get("source")
+    source = None
+    if source_record is not None:
+        if not isinstance(source_record, Mapping):
+            raise ValueError("material source must be a mapping or null")
+        source = MaterialSource(source_record.get("reference"), source_record.get("revision"))
+    material = MaterialSnapshot(
+        material_record.get("name"),
+        scalar(material_record, "youngs_modulus_pa"),
+        scalar(material_record, "poissons_ratio"),
+        optional_scalar(material_record, "density_kg_per_m3"),
+        optional_scalar(material_record, "yield_strength_pa"),
+        source,
+    )
+
+    load_records = value.get("loads")
+    if not isinstance(load_records, list):
+        raise ValueError("loads must be a list")
+    loads: list[EngineeringLoad] = []
+    for record in load_records:
+        if not isinstance(record, Mapping):
+            raise ValueError("load must be a mapping")
+        target = selection(record.get("target"))
+        if record.get("type") == "force":
+            direction = record.get("unit_direction")
+            vector = record.get("vector_n")
+            if not isinstance(direction, list) or not isinstance(vector, list):
+                raise ValueError("force direction and vector must be lists")
+            force = ForceLoad(
+                target,
+                scalar(record, "magnitude_n"),
+                tuple(float(item) for item in direction),
+            )
+            if len(vector) != 3 or any(
+                not math.isclose(actual, expected, rel_tol=1.0e-12, abs_tol=1.0e-9)
+                for actual, expected in zip(vector, force.vector_n)
+            ):
+                raise ValueError("force vector_n must equal magnitude times unit_direction")
+            loads.append(force)
+        elif record.get("type") == "pressure":
+            loads.append(
+                PressureLoad(
+                    target,
+                    scalar(record, "magnitude_pa"),
+                    SurfaceNormalDirection(record.get("normal_direction")),
+                )
+            )
+        else:
+            raise ValueError("unsupported load type")
+
+    boundary_records = value.get("boundary_conditions")
+    if not isinstance(boundary_records, list):
+        raise ValueError("boundary_conditions must be a list")
+    boundaries = []
+    for record in boundary_records:
+        if not isinstance(record, Mapping) or not isinstance(record.get("constrained_dofs"), list):
+            raise ValueError("boundary condition must contain a DOF list")
+        boundaries.append(
+            BoundaryCondition(
+                selection(record.get("target")),
+                tuple(TranslationalDof(item) for item in record["constrained_dofs"]),
+            )
+        )
+
+    mesh_record = value.get("mesh_config")
+    solver_record = value.get("solver_config")
+    if not isinstance(mesh_record, Mapping) or not isinstance(solver_record, Mapping):
+        raise ValueError("mesh_config and solver_config must be mappings")
+    mesh = MeshConfig(
+        MeshElementType(mesh_record.get("element_type")),
+        scalar(mesh_record, "characteristic_size_m"),
+        mesh_record.get("mesher_identifier"),
+        mesh_record.get("mesher_version"),
+    )
+    if mesh_record.get("element_order") != mesh.element_order:
+        raise ValueError("mesh element order does not match element type")
+    output_requests = solver_record.get("output_requests")
+    if not isinstance(output_requests, list):
+        raise ValueError("solver output_requests must be a list")
+    solver = SolverConfig(
+        solver_record.get("solver_identifier"),
+        solver_record.get("solver_version"),
+        AnalysisType(solver_record.get("analysis_type")),
+        solver_record.get("small_deformation"),
+        tuple(output_requests),
+    )
+    return AnalysisDefinition(
+        ModelVersionReference(value.get("model_version_reference")),
+        material,
+        tuple(loads),
+        tuple(boundaries),
+        mesh,
+        solver,
+        optional_scalar(value, "required_factor_of_safety"),
+    )

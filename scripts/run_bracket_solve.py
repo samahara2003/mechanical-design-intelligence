@@ -173,15 +173,63 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def main() -> int:
-    output_dir = parse_args().output_dir.resolve()
+def execute_bracket_solve(output_dir: Path, analysis: AnalysisDefinition) -> dict:
+    """Execute the controlled bracket solve for an already-frozen definition."""
+    output_dir = output_dir.resolve()
     mesh_path = output_dir / "bracket.msh"
     ccx = shutil.which("ccx")
     if ccx is None or not mesh_path.is_file():
-        print("error: ccx or bracket mesh is unavailable", file=sys.stderr)
-        return 1
+        raise SolveError("ccx or bracket mesh is unavailable")
+    mesh_summary = json.loads((output_dir / "bracket_mesh_summary.json").read_text(encoding="utf-8"))
+    version_output = subprocess.run([ccx, "-v"], capture_output=True, text=True, timeout=10)
+    version_match = re.search(r"This is Version\s+([\d.]+)", version_output.stdout + version_output.stderr)
+    if version_match is None:
+        raise SolveError("Unable to identify CalculiX version")
+    if version_match.group(1) != analysis.solver.solver_version:
+        raise SolveError("Runtime CalculiX version differs from frozen AnalysisDefinition")
+    if mesh_summary["gmsh_version"] != analysis.mesh.mesher_version:
+        raise SolveError("Mesh Gmsh version differs from frozen AnalysisDefinition")
+    if mesh_summary["mesh_size_m"] != analysis.mesh.characteristic_size_m:
+        raise SolveError("Mesh size differs from frozen AnalysisDefinition")
+    nodes, _ = read_msh(mesh_path)
+    model, deck = prepare_model(mesh_path, analysis)
+    job_name = "bracket_static"
+    for old in output_dir.glob(f"{job_name}.*"):
+        old.unlink()
+    deck_path = output_dir / f"{job_name}.inp"
+    deck_path.write_text(deck, encoding="ascii")
+    completed = subprocess.run(
+        [ccx, "-i", job_name], cwd=output_dir, capture_output=True, text=True, timeout=180
+    )
+    stdout_path = output_dir / f"{job_name}.stdout.txt"
+    stderr_path = output_dir / f"{job_name}.stderr.txt"
+    stdout_path.write_text(completed.stdout, encoding="utf-8")
+    stderr_path.write_text(completed.stderr, encoding="utf-8")
+    dat_path = output_dir / f"{job_name}.dat"
+    frd_path = output_dir / f"{job_name}.frd"
+    if any(not path.is_file() or path.stat().st_size == 0 for path in (dat_path, frd_path)):
+        raise SolveError("CalculiX did not create nonempty DAT and FRD results")
+    sanity = inspect_result(dat_path, nodes)
+    sanity["solver_completed"] = "JOB FINISHED" in completed.stdout.upper()
+    sanity["solver_warnings"] = [
+        line.strip() for line in completed.stdout.splitlines() if "warning" in line.lower()
+    ]
+    if not sanity["solver_completed"] or not sanity["reaction_balances_applied_load"]:
+        raise SolveError(f"Bracket solve sanity failed: {sanity}")
+    return {
+        "status": "ok", "ccx_version": version_match.group(1), "ccx_exit_code": completed.returncode,
+        "model": model, "sanity": sanity,
+        "artifacts": {"input": str(deck_path), "dat": str(dat_path), "frd": str(frd_path), "stdout": str(stdout_path), "stderr": str(stderr_path)},
+    }
+
+
+def main() -> int:
+    output_dir = parse_args().output_dir.resolve()
     try:
         mesh_summary = json.loads((output_dir / "bracket_mesh_summary.json").read_text(encoding="utf-8"))
+        ccx = shutil.which("ccx")
+        if ccx is None:
+            raise SolveError("ccx is unavailable")
         version_output = subprocess.run([ccx, "-v"], capture_output=True, text=True, timeout=10)
         version_match = re.search(r"This is Version\s+([\d.]+)", version_output.stdout + version_output.stderr)
         if version_match is None:
@@ -189,39 +237,10 @@ def main() -> int:
         analysis = bracket_analysis_definition(
             mesh_summary["gmsh_version"], version_match.group(1), mesh_summary["mesh_size_m"]
         )
-        nodes, _ = read_msh(mesh_path)
-        model, deck = prepare_model(mesh_path, analysis)
-        job_name = "bracket_static"
-        for old in output_dir.glob(f"{job_name}.*"):
-            old.unlink()
-        deck_path = output_dir / f"{job_name}.inp"
-        deck_path.write_text(deck, encoding="ascii")
-        completed = subprocess.run(
-            [ccx, "-i", job_name], cwd=output_dir, capture_output=True, text=True, timeout=180
-        )
-        stdout_path = output_dir / f"{job_name}.stdout.txt"
-        stderr_path = output_dir / f"{job_name}.stderr.txt"
-        stdout_path.write_text(completed.stdout, encoding="utf-8")
-        stderr_path.write_text(completed.stderr, encoding="utf-8")
-        dat_path = output_dir / f"{job_name}.dat"
-        frd_path = output_dir / f"{job_name}.frd"
-        if any(not path.is_file() or path.stat().st_size == 0 for path in (dat_path, frd_path)):
-            raise SolveError("CalculiX did not create nonempty DAT and FRD results")
-        sanity = inspect_result(dat_path, nodes)
-        sanity["solver_completed"] = "JOB FINISHED" in completed.stdout.upper()
-        sanity["solver_warnings"] = [
-            line.strip() for line in completed.stdout.splitlines() if "warning" in line.lower()
-        ]
-        if not sanity["solver_completed"] or not sanity["reaction_balances_applied_load"]:
-            raise SolveError(f"Bracket solve sanity failed: {sanity}")
+        summary = execute_bracket_solve(output_dir, analysis)
     except (OSError, ValueError, subprocess.TimeoutExpired, SolveError, CalculixAdapterError, CalculixResultParseError) as error:
         print(f"error: {error}", file=sys.stderr)
         return 1
-    summary = {
-        "status": "ok", "ccx_version": version_match.group(1), "ccx_exit_code": completed.returncode,
-        "model": model, "sanity": sanity,
-        "artifacts": {"input": str(deck_path), "dat": str(dat_path), "frd": str(frd_path), "stdout": str(stdout_path), "stderr": str(stderr_path)},
-    }
     print(json.dumps(summary, indent=2))
     return 0
 

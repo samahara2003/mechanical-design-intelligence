@@ -174,7 +174,7 @@ No production package layout, command-line interface, persistence schema, artifa
 
 ## 2. Web application V0 persistence foundation
 
-The Web App V0 is contained in `web/` and uses the Next.js App Router, React, TypeScript, Drizzle ORM, and PostgreSQL. It provides application/domain persistence for `Model`, immutable `ModelVersion`, lifecycle-controlled `Analysis`, and one immutable final `AnalysisResult` per analysis. It also supports the first private STEP-ingestion boundary, but does not invoke the Engineering Core, run Gmsh or CalculiX, or implement queues, workers, SSE, authentication, AI, or visualization.
+The Web App V0 is contained in `web/` and uses the Next.js App Router, React, TypeScript, Drizzle ORM, and PostgreSQL. It provides application/domain persistence for `Model`, immutable `ModelVersion`, lifecycle-controlled `Analysis`, and one immutable final `AnalysisResult` per analysis. It also supports the first private STEP-ingestion boundary. The later local Worker V0 slice below connects that persistence to the controlled bracket Engineering Core path; SSE, authentication, AI, and visualization remain absent.
 
 `ModelVersion` records one exact geometry revision through a parent model, positive version number, original filename, upload SHA-256, byte size, and its private object key. A database trigger rejects every update to a model-version row; changed geometry therefore requires a new row. The upload hash supports application integrity only. A future Engineering Worker must recompute SHA-256 from the exact downloaded bytes before treating it as execution provenance.
 
@@ -188,7 +188,17 @@ The implemented lifecycle is `draft -> queued`, `queued -> running|canceled`, an
 
 `analysis_results` contains only the compact reusable result summary and provenance summary as typed `jsonb`; full nodal and integration-point fields remain outside PostgreSQL. `analysis_id` is its primary key, enforcing one final result per analysis. Insert is permitted only for a completed analysis, and an update trigger makes the final row immutable. Creation of a changed configuration after execution is represented by a new draft `Analysis`, never an edit to execution history.
 
-The checked-in SQL migration contains constraints and triggers that Drizzle's table declaration cannot express alone. A configured PostgreSQL instance is still required before applying it. No queue semantics, execution idempotency, cancellation race handling, artifact persistence, user ownership, or deployment topology is implemented in V0.
+The checked-in SQL migrations contain constraints and triggers that Drizzle's table declaration cannot express alone. A configured PostgreSQL instance is still required before applying them. User ownership and deployment topology remain deferred.
+
+### Engineering Worker V0
+
+PostgreSQL is the only V0 durable queue. Each Analysis has at most one `analysis_jobs` row. Application enqueue validates that the persisted draft still matches the definition fingerprinted by the Python Engineering Core, then stores that fingerprint, creates the job, and transitions `draft -> queued` in one database transaction. There is no Redis, Celery, broker, or duplicated product lifecycle.
+
+The Python worker claims one queued job, or one expired claim, using `FOR UPDATE SKIP LOCKED`. Each claim increments an attempt counter and receives a new UUID fencing token plus a 30-minute lease. Initial claim changes the Analysis from `queued` to `running` in the same transaction. A reclaimed Analysis is already running. Finalization requires the current claim token and a running Analysis; a stale worker or canceled/terminal Analysis cannot publish. The final transaction changes `running -> completed`, inserts the one immutable `AnalysisResult`, and marks the job finished atomically. Controlled failure stores only a bounded phase and exception class, changes a still-running Analysis to `failed`, and finishes its job.
+
+Worker V0 is deliberately restricted to the proven baseline mounting bracket: named `bracket`, `mounting_holes`, and `load_pad` regions, its fixed material/load/boundary definition, C3D10 at `0.006 m`, and the configured Gmsh/CalculiX versions. Named regions are still recovered after STEP import with the existing dimensional checks. Arbitrary uploaded CAD and persistent topology identity remain unsupported.
+
+The worker streams the private ModelVersion STEP from R2 and recomputes SHA-256 and byte size before Gmsh can run. This worker hash is compared with the upload integrity metadata and becomes provenance for the exact consumed STEP. Generated mesh, CalculiX input, DAT, and FRD are uploaded directly under immutable server-owned keys `analyses/{analysisId}/attempts/{claimToken}/{role}.{suffix}`. A reclaimed attempt therefore never overwrites or conflicts with earlier run-varying bytes. Only the successfully fenced attempt's exact keys and hashes enter persisted provenance. A stale attempt may leave private orphan objects; automated cleanup is deferred. The compact solver-neutral `AnalysisResult` and path-free `AnalysisProvenance` summary are stored in PostgreSQL, while full artifacts remain private in R2.
 
 ## 3. Planned future system architecture
 

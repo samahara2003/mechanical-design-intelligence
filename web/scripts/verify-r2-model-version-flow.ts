@@ -10,7 +10,7 @@ import {
   requestModelVersionUpload,
 } from "../src/application/model-version-uploads.ts";
 import { createModel, type MdiDatabase } from "../src/application/persistence.ts";
-import { getDatabase } from "../src/db/client.ts";
+import { closeDatabase, getDatabase } from "../src/db/client.ts";
 import * as schema from "../src/db/schema.ts";
 import { getPrivateObjectStorage } from "../src/storage/r2.ts";
 
@@ -116,4 +116,5 @@ try {
     const remaining = await db.query.models.findFirst({ where: eq(schema.models.id, modelId) });
     assert.equal(remaining, undefined);
   }
+  await closeDatabase();
 }

@@ -4,6 +4,7 @@ import test from "node:test";
 
 const migrationUrl = new URL("../../drizzle/0000_web_foundation.sql", import.meta.url);
 const uploadMigrationUrl = new URL("../../drizzle/0001_model_version_uploads.sql", import.meta.url);
+const workerMigrationUrl = new URL("../../drizzle/0002_analysis_jobs.sql", import.meta.url);
 
 test("migration enforces one immutable final result per Analysis", async () => {
   const sql = await readFile(migrationUrl, "utf8");
@@ -36,4 +37,13 @@ test("upload migration separates incomplete uploads from immutable ModelVersions
   assert.match(sql, /ALTER TABLE "model_versions" ADD COLUMN "source_size_bytes" bigint NOT NULL/);
   assert.match(sql, /model_version_uploads_sha256_format/);
   assert.match(sql, /model_version_uploads_expiry_after_creation/);
+});
+
+test("worker migration provides one lease-fenced job per Analysis", async () => {
+  const sql = await readFile(workerMigrationUrl, "utf8");
+  assert.match(sql, /CREATE TABLE "analysis_jobs"/);
+  assert.match(sql, /analysis_id" uuid PRIMARY KEY/);
+  assert.match(sql, /analysis_jobs_state_consistency/);
+  assert.match(sql, /claim_token/);
+  assert.match(sql, /lease_expires_at/);
 });

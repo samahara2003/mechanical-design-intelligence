@@ -23,10 +23,20 @@ from engineering_domain import (  # noqa: E402
     SolverConfig,
     SurfaceNormalDirection,
     TranslationalDof,
+    analysis_definition_from_dict,
+    analysis_definition_to_dict,
 )
 
 
 class EngineeringDomainTests(unittest.TestCase):
+    def test_serialized_definition_round_trip_is_authoritative(self) -> None:
+        definition = axial_bar_analysis_definition("4.15.2", "2.23")
+        record = analysis_definition_to_dict(definition)
+        self.assertEqual(analysis_definition_from_dict(record), definition)
+        record["loads"][0]["vector_n"][0] = 999.0
+        with self.assertRaisesRegex(ValueError, "force vector_n"):
+            analysis_definition_from_dict(record)
+
     def setUp(self) -> None:
         self.face = GeometrySelection("loaded_face", GeometryEntity.FACE)
         self.fixed = BoundaryCondition(

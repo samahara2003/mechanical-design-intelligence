@@ -1,5 +1,6 @@
 import { and, eq } from "drizzle-orm";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
+import { isDeepStrictEqual } from "node:util";
 
 import {
   AnalysisLifecycleError,
@@ -89,12 +90,27 @@ export async function queueDraftAnalysis(
   db: MdiDatabase,
   analysisId: string,
   authoritativeDefinitionSha256: string,
+  expectedDefinition: EngineeringDefinition,
 ) {
   if (!/^[0-9a-f]{64}$/.test(authoritativeDefinitionSha256)) {
     throw new Error("invalid authoritative AnalysisDefinition SHA-256");
   }
   if (!canTransition("draft", "queued")) throw new AnalysisLifecycleError("queue transition unavailable");
+  validateEngineeringDefinition(expectedDefinition);
   return db.transaction(async (tx) => {
+    const current = await tx.query.analyses.findFirst({
+      where: eq(schema.analyses.id, analysisId),
+    });
+    if (current === undefined || current.status !== "draft") {
+      throw new AnalysisLifecycleError("queue rejected because Analysis is missing or no longer draft");
+    }
+    validateEngineeringDefinition(current.engineeringDefinition);
+    if (!isDeepStrictEqual(current.engineeringDefinition, expectedDefinition)) {
+      throw new AnalysisLifecycleError("draft changed after authoritative fingerprinting");
+    }
+    if (current.engineeringDefinition.model_version_reference !== current.modelVersionId) {
+      throw new AnalysisLifecycleError("Analysis definition does not reference its ModelVersion");
+    }
     const [fingerprinted] = await tx.update(schema.analyses).set({
       definitionSha256: authoritativeDefinitionSha256,
       updatedAt: new Date(),
@@ -102,6 +118,7 @@ export async function queueDraftAnalysis(
     if (fingerprinted === undefined) {
       throw new AnalysisLifecycleError("queue rejected because Analysis is missing or no longer draft");
     }
+    await tx.insert(schema.analysisJobs).values({ analysisId });
     const startedAt = new Date();
     const [queued] = await tx.update(schema.analyses).set({
       status: "queued",

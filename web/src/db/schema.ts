@@ -22,6 +22,9 @@ import type { AnalysisProvenanceSummary, AnalysisResultSummary } from "../domain
 export const analysisStatus = pgEnum("analysis_status", [
   "draft", "queued", "running", "completed", "failed", "canceled",
 ]);
+export const analysisJobStatus = pgEnum("analysis_job_status", [
+  "queued", "claimed", "finished",
+]);
 
 export const models = pgTable("models", {
   id: uuid("id").defaultRandom().primaryKey(),
@@ -79,6 +82,29 @@ export const analyses = pgTable("analyses", {
   check("analyses_definition_object", sql`jsonb_typeof(${table.engineeringDefinition}) = 'object'`),
   check("analyses_sha256_format", sql`${table.definitionSha256} is null or ${table.definitionSha256} ~ '^[0-9a-f]{64}$'`),
   check("analyses_execution_lifecycle", sql`(${table.status} = 'draft' and ${table.executionStartedAt} is null) or (${table.status} <> 'draft' and ${table.executionStartedAt} is not null and ${table.definitionSha256} is not null)`),
+]);
+
+export const analysisJobs = pgTable("analysis_jobs", {
+  analysisId: uuid("analysis_id").primaryKey().references(() => analyses.id, { onDelete: "restrict" }),
+  status: analysisJobStatus("status").default("queued").notNull(),
+  attemptCount: integer("attempt_count").default(0).notNull(),
+  availableAt: timestamp("available_at", { withTimezone: true }).defaultNow().notNull(),
+  claimToken: uuid("claim_token"),
+  claimedBy: text("claimed_by"),
+  claimedAt: timestamp("claimed_at", { withTimezone: true }),
+  leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true }),
+  completedAt: timestamp("completed_at", { withTimezone: true }),
+  failureReason: text("failure_reason"),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+  index("analysis_jobs_claim_idx").on(table.status, table.availableAt, table.leaseExpiresAt),
+  check("analysis_jobs_attempt_nonnegative", sql`${table.attemptCount} >= 0`),
+  check("analysis_jobs_failure_reason_bounded", sql`${table.failureReason} is null or length(${table.failureReason}) between 1 and 1000`),
+  check("analysis_jobs_state_consistency", sql`
+    (${table.status} = 'queued' and ${table.attemptCount} = 0 and ${table.claimToken} is null and ${table.claimedBy} is null and ${table.claimedAt} is null and ${table.leaseExpiresAt} is null and ${table.completedAt} is null and ${table.failureReason} is null)
+    or (${table.status} = 'claimed' and ${table.attemptCount} > 0 and ${table.claimToken} is not null and ${table.claimedBy} is not null and ${table.claimedAt} is not null and ${table.leaseExpiresAt} is not null and ${table.completedAt} is null and ${table.failureReason} is null)
+    or (${table.status} = 'finished' and ${table.attemptCount} > 0 and ${table.claimToken} is not null and ${table.claimedBy} is not null and ${table.claimedAt} is not null and ${table.leaseExpiresAt} is not null and ${table.completedAt} is not null)
+  `),
 ]);
 
 export const analysisResults = pgTable("analysis_results", {

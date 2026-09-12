@@ -12,7 +12,8 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:verify": "node scripts/verify-database-invariants.mjs",
-    "verify:upload": "node --experimental-strip-types scripts/verify-r2-model-version-flow.ts"
+    "verify:upload": "node --experimental-strip-types scripts/verify-r2-model-version-flow.ts",
+    "verify:worker": "node --experimental-strip-types scripts/verify-engineering-worker-e2e.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1131.0",

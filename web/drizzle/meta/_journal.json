@@ -15,6 +15,13 @@
       "when": 1789180798807,
       "tag": "0001_model_version_uploads",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1789182069333,
+      "tag": "0002_analysis_jobs",
+      "breakpoints": true
     }
   ]
 }
