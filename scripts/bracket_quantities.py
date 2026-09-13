@@ -2,6 +2,7 @@
 
 from bracket_definition import BRACKET_LOAD_FACE
 from engineering_quantities import (
+    DiscretizationErrorEstimatePolicy,
     MeshRefinementComparisonPolicy,
     QuantityAggregation,
     QuantityComponent,
@@ -29,3 +30,12 @@ LOAD_PAD_UX_REFINEMENT_POLICY = MeshRefinementComparisonPolicy(
 
 BRACKET_MESH_STUDY_ID = "controlled_bracket_load_pad_average_ux_three_level"
 BRACKET_MESH_STUDY_VERSION = "1"
+
+BRACKET_DISCRETIZATION_ESTIMATE_POLICY = DiscretizationErrorEstimatePolicy(
+    policy_name="controlled_bracket_three_grid_discretization_estimate",
+    policy_version="1",
+    safety_factor=1.25,
+    minimum_difference_magnitude=1.0e-12,
+    minimum_relative_reference_magnitude=1.0e-12,
+    refinement_ratio_relative_tolerance=1.0e-12,
+)

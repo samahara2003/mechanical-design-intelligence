@@ -1,4 +1,4 @@
-"""Solver-neutral quantities and two-level mesh-refinement evidence."""
+"""Solver-neutral quantities, mesh-refinement evidence, and V1 error estimates."""
 
 from __future__ import annotations
 
@@ -292,6 +292,137 @@ class RawStressMeshTrendDiagnostic:
         object.__setattr__(self, "adjacent_changes", changes)
 
 
+@dataclass(frozen=True)
+class DiscretizationErrorEstimatePolicy:
+    """Explicit policy for the supported constant-ratio three-grid method."""
+
+    policy_name: str
+    policy_version: str
+    safety_factor: float
+    minimum_difference_magnitude: float
+    minimum_relative_reference_magnitude: float
+    refinement_ratio_relative_tolerance: float
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "policy_name", _required_text(self.policy_name, "policy name"))
+        object.__setattr__(
+            self, "policy_version", _required_text(self.policy_version, "policy version")
+        )
+        if not math.isfinite(self.safety_factor) or self.safety_factor <= 0.0:
+            raise ValueError("GCI safety factor must be positive and finite")
+        _nonnegative_finite(
+            self.minimum_difference_magnitude, "minimum successive-difference magnitude"
+        )
+        _nonnegative_finite(
+            self.minimum_relative_reference_magnitude,
+            "minimum relative-reference magnitude",
+        )
+        _nonnegative_finite(
+            self.refinement_ratio_relative_tolerance,
+            "refinement-ratio relative tolerance",
+        )
+
+
+@dataclass(frozen=True)
+class DiscretizationEstimateEligibility:
+    """Structured eligibility outcome; ineligible records carry no formal estimate."""
+
+    status: str
+    reason_code: str | None
+    reason: str | None
+
+    def __post_init__(self) -> None:
+        if self.status not in {"eligible", "ineligible"}:
+            raise ValueError("unsupported discretization-estimate eligibility status")
+        if self.status == "eligible":
+            if self.reason_code is not None or self.reason is not None:
+                raise ValueError("eligible estimate must not carry an ineligibility reason")
+        else:
+            object.__setattr__(
+                self, "reason_code", _required_text(self.reason_code, "ineligibility code")
+            )
+            object.__setattr__(
+                self, "reason", _required_text(self.reason, "ineligibility reason")
+            )
+
+
+@dataclass(frozen=True)
+class DiscretizationErrorEstimate:
+    """Narrow three-grid Richardson/GCI evidence for one solver-neutral quantity."""
+
+    estimate_version: str
+    source_study_id: str
+    quantity_id: str
+    units: str
+    policy: DiscretizationErrorEstimatePolicy
+    eligibility: DiscretizationEstimateEligibility
+    interpretation: str
+    grid_sizes_m: tuple[float, float, float]
+    refinement_ratios: tuple[float, float]
+    fine_value: float
+    observed_order: float | None
+    richardson_extrapolated_value: float | None
+    signed_fine_to_extrapolated_difference: float | None
+    absolute_fine_to_extrapolated_difference: float | None
+    relative_fine_to_extrapolated_difference: float | None
+    approximate_relative_error: float | None
+    fine_grid_gci: float | None
+    scope: str = field(default="three_grid_discretization_estimate_only", init=False)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self, "estimate_version", _required_text(self.estimate_version, "estimate version")
+        )
+        object.__setattr__(
+            self, "source_study_id", _required_text(self.source_study_id, "source study ID")
+        )
+        object.__setattr__(self, "quantity_id", _required_text(self.quantity_id, "quantity ID"))
+        object.__setattr__(self, "units", _required_text(self.units, "estimate units"))
+        if not isinstance(self.policy, DiscretizationErrorEstimatePolicy):
+            raise TypeError("discretization estimate requires an explicit policy")
+        if not isinstance(self.eligibility, DiscretizationEstimateEligibility):
+            raise TypeError("discretization estimate requires eligibility evidence")
+        if self.interpretation not in {"qoi_discretization_evidence", "diagnostic_only"}:
+            raise ValueError("unsupported discretization evidence interpretation")
+        sizes = tuple(self.grid_sizes_m)
+        ratios = tuple(self.refinement_ratios)
+        if len(sizes) != 3 or any(not math.isfinite(value) or value <= 0.0 for value in sizes):
+            raise ValueError("discretization estimate requires three positive finite grid sizes")
+        if len(ratios) != 2 or any(not math.isfinite(value) or value <= 1.0 for value in ratios):
+            raise ValueError("discretization estimate requires two valid refinement ratios")
+        if not math.isfinite(self.fine_value):
+            raise ValueError("fine-grid value must be finite")
+        formal_values = (
+            self.observed_order,
+            self.richardson_extrapolated_value,
+            self.signed_fine_to_extrapolated_difference,
+            self.absolute_fine_to_extrapolated_difference,
+            self.approximate_relative_error,
+            self.fine_grid_gci,
+        )
+        if self.eligibility.status == "ineligible" and any(
+            value is not None for value in (*formal_values, self.relative_fine_to_extrapolated_difference)
+        ):
+            raise ValueError("ineligible study must not carry formal numerical estimates")
+        if self.eligibility.status == "eligible":
+            if any(value is None or not math.isfinite(value) for value in formal_values):
+                raise ValueError("eligible study requires finite formal numerical estimates")
+            if self.observed_order <= 0.0 or self.fine_grid_gci < 0.0:
+                raise ValueError("eligible estimate requires positive order and nonnegative GCI")
+            _nonnegative_finite(
+                self.absolute_fine_to_extrapolated_difference,
+                "absolute fine-to-extrapolated difference",
+            )
+            _nonnegative_finite(self.approximate_relative_error, "approximate relative error")
+            if self.relative_fine_to_extrapolated_difference is not None:
+                _nonnegative_finite(
+                    self.relative_fine_to_extrapolated_difference,
+                    "relative fine-to-extrapolated difference",
+                )
+        object.__setattr__(self, "grid_sizes_m", sizes)
+        object.__setattr__(self, "refinement_ratios", ratios)
+
+
 def quantity_of_interest_to_dict(quantity: QuantityOfInterest) -> dict:
     return {
         "quantity_id": quantity.quantity_id,
@@ -555,6 +686,292 @@ def mesh_convergence_study_to_dict(study: MeshConvergenceStudy) -> dict:
     }
 
 
+def _ineligible_discretization_estimate(
+    *,
+    source_study_id: str,
+    quantity_id: str,
+    units: str,
+    policy: DiscretizationErrorEstimatePolicy,
+    sizes: tuple[float, float, float],
+    ratios: tuple[float, float],
+    fine_value: float,
+    reason_code: str,
+    reason: str,
+    interpretation: str,
+) -> DiscretizationErrorEstimate:
+    return DiscretizationErrorEstimate(
+        "1",
+        source_study_id,
+        quantity_id,
+        units,
+        policy,
+        DiscretizationEstimateEligibility("ineligible", reason_code, reason),
+        interpretation,
+        sizes,
+        ratios,
+        fine_value,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+    )
+
+
+def _estimate_three_grid_values(
+    *,
+    source_study_id: str,
+    quantity_id: str,
+    units: str,
+    values: tuple[float, float, float],
+    sizes: tuple[float, float, float],
+    policy: DiscretizationErrorEstimatePolicy,
+    interpretation: str,
+) -> DiscretizationErrorEstimate:
+    """Apply the V1 constant-ratio formula to grid-3/grid-2/grid-1 values.
+
+    With coarse/medium/fine values phi3, phi2, phi1 and common ratio r,
+    p = ln(abs((phi2-phi3)/(phi1-phi2))) / ln(r).
+    """
+    if not isinstance(policy, DiscretizationErrorEstimatePolicy):
+        raise TypeError("formal estimate requires a DiscretizationErrorEstimatePolicy")
+    if any(not math.isfinite(value) for value in values):
+        raise ValueError("three-grid quantity values must be finite")
+    if any(not math.isfinite(value) or value <= 0.0 for value in sizes):
+        raise ValueError("grid sizes must be positive and finite")
+    h3, h2, h1 = sizes
+    if not h3 > h2 > h1:
+        raise ValueError("grid sizes must be ordered coarse, medium, fine")
+    r32, r21 = h3 / h2, h2 / h1
+    ratios = (r32, r21)
+    if not math.isclose(
+        r32,
+        r21,
+        rel_tol=policy.refinement_ratio_relative_tolerance,
+        abs_tol=0.0,
+    ):
+        return _ineligible_discretization_estimate(
+            source_study_id=source_study_id,
+            quantity_id=quantity_id,
+            units=units,
+            policy=policy,
+            sizes=sizes,
+            ratios=ratios,
+            fine_value=values[2],
+            reason_code="nonuniform_refinement_ratio_unsupported",
+            reason="V1 supports only a constant characteristic-size refinement ratio",
+            interpretation=interpretation,
+        )
+    refinement_ratio = (r32 + r21) / 2.0
+    ratios = (refinement_ratio, refinement_ratio)
+    phi3, phi2, phi1 = values
+    delta32 = phi2 - phi3
+    delta21 = phi1 - phi2
+    if (
+        abs(delta32) <= policy.minimum_difference_magnitude
+        or abs(delta21) <= policy.minimum_difference_magnitude
+    ):
+        return _ineligible_discretization_estimate(
+            source_study_id=source_study_id,
+            quantity_id=quantity_id,
+            units=units,
+            policy=policy,
+            sizes=sizes,
+            ratios=ratios,
+            fine_value=phi1,
+            reason_code="successive_difference_below_policy_minimum",
+            reason="at least one successive difference is too small for a meaningful V1 estimate",
+            interpretation=interpretation,
+        )
+    if delta32 * delta21 <= 0.0:
+        return _ineligible_discretization_estimate(
+            source_study_id=source_study_id,
+            quantity_id=quantity_id,
+            units=units,
+            policy=policy,
+            sizes=sizes,
+            ratios=ratios,
+            fine_value=phi1,
+            reason_code="nonmonotonic_sequence",
+            reason="successive solution differences do not have a common sign",
+            interpretation=interpretation,
+        )
+    observed_order = math.log(abs(delta32 / delta21)) / math.log(refinement_ratio)
+    if not math.isfinite(observed_order) or observed_order <= 0.0:
+        return _ineligible_discretization_estimate(
+            source_study_id=source_study_id,
+            quantity_id=quantity_id,
+            units=units,
+            policy=policy,
+            sizes=sizes,
+            ratios=ratios,
+            fine_value=phi1,
+            reason_code="observed_order_not_positive",
+            reason="successive changes do not decrease, so the V1 observed order is not positive",
+            interpretation=interpretation,
+        )
+    denominator = refinement_ratio**observed_order - 1.0
+    if not math.isfinite(denominator) or denominator <= 0.0:
+        return _ineligible_discretization_estimate(
+            source_study_id=source_study_id,
+            quantity_id=quantity_id,
+            units=units,
+            policy=policy,
+            sizes=sizes,
+            ratios=ratios,
+            fine_value=phi1,
+            reason_code="invalid_extrapolation_denominator",
+            reason="the V1 Richardson denominator is not positive and finite",
+            interpretation=interpretation,
+        )
+    extrapolated = phi1 + delta21 / denominator
+    signed_difference = extrapolated - phi1
+    absolute_difference = abs(signed_difference)
+    relative_difference = (
+        None
+        if abs(extrapolated) <= policy.minimum_relative_reference_magnitude
+        else absolute_difference / abs(extrapolated)
+    )
+    if abs(phi1) <= policy.minimum_relative_reference_magnitude:
+        return _ineligible_discretization_estimate(
+            source_study_id=source_study_id,
+            quantity_id=quantity_id,
+            units=units,
+            policy=policy,
+            sizes=sizes,
+            ratios=ratios,
+            fine_value=phi1,
+            reason_code="fine_value_below_relative_reference_minimum",
+            reason="fine-grid magnitude is too small for the relative-error and GCI definitions",
+            interpretation=interpretation,
+        )
+    approximate_relative_error = abs(delta21 / phi1)
+    fine_grid_gci = policy.safety_factor * approximate_relative_error / denominator
+    return DiscretizationErrorEstimate(
+        "1",
+        source_study_id,
+        quantity_id,
+        units,
+        policy,
+        DiscretizationEstimateEligibility("eligible", None, None),
+        interpretation,
+        sizes,
+        ratios,
+        phi1,
+        observed_order,
+        extrapolated,
+        signed_difference,
+        absolute_difference,
+        relative_difference,
+        approximate_relative_error,
+        fine_grid_gci,
+    )
+
+
+def estimate_mesh_discretization_error(
+    study: MeshConvergenceStudy,
+    policy: DiscretizationErrorEstimatePolicy,
+) -> DiscretizationErrorEstimate:
+    """Estimate V1 discretization error from a validated three-level QoI study."""
+    if not isinstance(study, MeshConvergenceStudy):
+        raise TypeError("formal estimate requires a MeshConvergenceStudy")
+    return _estimate_three_grid_values(
+        source_study_id=study.study_id,
+        quantity_id=study.quantity.quantity_id,
+        units=study.quantity.units,
+        values=tuple(item.value for item in study.evaluations),
+        sizes=tuple(item.mesh.characteristic_size_m for item in study.evaluations),
+        policy=policy,
+        interpretation="qoi_discretization_evidence",
+    )
+
+
+def assess_raw_stress_discretization_eligibility(
+    study: RawStressMeshTrendDiagnostic,
+    policy: DiscretizationErrorEstimatePolicy,
+) -> DiscretizationErrorEstimate:
+    """Apply the same eligibility gate to diagnostic raw peak stress evidence."""
+    if not isinstance(study, RawStressMeshTrendDiagnostic):
+        raise TypeError("raw stress eligibility requires its three-level diagnostic")
+    return _estimate_three_grid_values(
+        source_study_id="controlled_bracket_global_raw_von_mises_three_level",
+        quantity_id="global_raw_integration_point_von_mises",
+        units="Pa",
+        values=tuple(level.peak.von_mises_pa for level in study.levels),
+        sizes=tuple(level.mesh.characteristic_size_m for level in study.levels),
+        policy=policy,
+        interpretation="diagnostic_only",
+    )
+
+
+def discretization_error_estimate_to_dict(
+    estimate: DiscretizationErrorEstimate,
+) -> dict:
+    """Canonically shaped serialization; fractions are never implicit percentages."""
+    return {
+        "estimate_version": estimate.estimate_version,
+        "scope": estimate.scope,
+        "source_study_id": estimate.source_study_id,
+        "quantity_id": estimate.quantity_id,
+        "units": estimate.units,
+        "interpretation": estimate.interpretation,
+        "eligibility": {
+            "status": estimate.eligibility.status,
+            "reason_code": estimate.eligibility.reason_code,
+            "reason": estimate.eligibility.reason,
+        },
+        "policy": {
+            "name": estimate.policy.policy_name,
+            "version": estimate.policy.policy_version,
+            "method": "constant_refinement_ratio_three_grid_richardson_gci",
+            "safety_factor": estimate.policy.safety_factor,
+            "minimum_difference_magnitude": estimate.policy.minimum_difference_magnitude,
+            "minimum_difference_units": estimate.units,
+            "minimum_relative_reference_magnitude": (
+                estimate.policy.minimum_relative_reference_magnitude
+            ),
+            "minimum_relative_reference_units": estimate.units,
+            "refinement_ratio_relative_tolerance": (
+                estimate.policy.refinement_ratio_relative_tolerance
+            ),
+        },
+        "ordering": "grid_3_coarse_grid_2_medium_grid_1_fine",
+        "grid_sizes_m": {
+            "grid_3_coarse": estimate.grid_sizes_m[0],
+            "grid_2_medium": estimate.grid_sizes_m[1],
+            "grid_1_fine": estimate.grid_sizes_m[2],
+        },
+        "refinement_ratios": {
+            "r32": estimate.refinement_ratios[0],
+            "r21": estimate.refinement_ratios[1],
+        },
+        "formula": {
+            "observed_order": "ln(abs((phi2-phi3)/(phi1-phi2)))/ln(r)",
+            "richardson": "phi1+(phi1-phi2)/(r^p-1)",
+            "fine_grid_gci": "safety_factor*abs((phi1-phi2)/phi1)/(r^p-1)",
+        },
+        "fine_value": estimate.fine_value,
+        "observed_order": estimate.observed_order,
+        "richardson_extrapolated_value": estimate.richardson_extrapolated_value,
+        "signed_fine_to_extrapolated_difference": (
+            estimate.signed_fine_to_extrapolated_difference
+        ),
+        "absolute_fine_to_extrapolated_difference": (
+            estimate.absolute_fine_to_extrapolated_difference
+        ),
+        "relative_fine_to_extrapolated_difference": (
+            estimate.relative_fine_to_extrapolated_difference
+        ),
+        "approximate_relative_error": estimate.approximate_relative_error,
+        "fine_grid_gci": estimate.fine_grid_gci,
+        "relative_values_semantics": "dimensionless_fraction",
+        "asymptotic_range_assessment": "not_established_v1",
+        "gci_semantics": "estimated_qoi_discretization_uncertainty_under_method_assumptions",
+    }
+
+
 def compare_raw_stress_diagnostic(
     reference_result: AnalysisResult,
     refined_result: AnalysisResult,
@@ -599,6 +1016,10 @@ def build_raw_stress_mesh_trend(
     model_versions = {item.model_version for item in result_levels}
     if len(model_versions) != 1:
         raise ValueError("raw stress trend requires one model version")
+    if len({item.quantity for item in evaluations}) != 1:
+        raise ValueError("raw stress trend requires one companion quantity")
+    if len({item.analysis_comparison_basis_sha256 for item in evaluations}) != 1:
+        raise ValueError("raw stress levels differ by more than characteristic mesh size")
     if any(
         result_levels[index].mesh != evaluations[index].mesh for index in range(3)
     ):

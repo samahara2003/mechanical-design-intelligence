@@ -29,6 +29,7 @@ from bracket_definition import (
     bracket_analysis_definition,
 )
 from bracket_quantities import (
+    BRACKET_DISCRETIZATION_ESTIMATE_POLICY,
     BRACKET_MESH_STUDY_ID,
     BRACKET_MESH_STUDY_VERSION,
     LOAD_PAD_AVERAGE_UX,
@@ -39,8 +40,11 @@ from engineering_assessment import engineering_assessment_to_dict
 from engineering_domain import analysis_definition_to_dict
 from engineering_quantities import (
     QuantityEvaluation,
+    assess_raw_stress_discretization_eligibility,
     build_mesh_convergence_study,
     build_raw_stress_mesh_trend,
+    discretization_error_estimate_to_dict,
+    estimate_mesh_discretization_error,
     evaluate_regional_displacement,
     mesh_convergence_study_to_dict,
     mesh_refinement_comparison_to_dict,
@@ -311,6 +315,12 @@ def main() -> int:
         )
         refinement = mesh_study.adjacent_comparisons[1]
         raw_stress_study = build_raw_stress_mesh_trend(results, evaluations)
+        displacement_error_estimate = estimate_mesh_discretization_error(
+            mesh_study, BRACKET_DISCRETIZATION_ESTIMATE_POLICY
+        )
+        raw_stress_error_eligibility = assess_raw_stress_discretization_eligibility(
+            raw_stress_study, BRACKET_DISCRETIZATION_ESTIMATE_POLICY
+        )
         stress_diagnostic = raw_stress_study.adjacent_changes[1]
         base_qoi = refinement.reference.value
         fine_qoi = refinement.refined.value
@@ -354,8 +364,14 @@ def main() -> int:
             },
             "levels": levels,
             "mesh_convergence_study": mesh_convergence_study_to_dict(mesh_study),
+            "displacement_discretization_error_estimate": (
+                discretization_error_estimate_to_dict(displacement_error_estimate)
+            ),
             "raw_stress_mesh_trend": raw_stress_mesh_trend_to_dict(
                 raw_stress_study
+            ),
+            "raw_stress_discretization_eligibility": (
+                discretization_error_estimate_to_dict(raw_stress_error_eligibility)
             ),
             "mesh_refinement_comparison": mesh_refinement_comparison_to_dict(refinement),
             "raw_stress_refinement_diagnostic": raw_stress_diagnostic_to_dict(

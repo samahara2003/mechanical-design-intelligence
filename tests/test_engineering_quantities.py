@@ -17,6 +17,7 @@ from analysis_results import (  # noqa: E402
 )
 from bracket_definition import BRACKET_LOAD_FACE, bracket_analysis_definition  # noqa: E402
 from bracket_quantities import (  # noqa: E402
+    BRACKET_DISCRETIZATION_ESTIMATE_POLICY,
     BRACKET_MESH_STUDY_ID,
     BRACKET_MESH_STUDY_VERSION,
     LOAD_PAD_AVERAGE_UX,
@@ -26,10 +27,13 @@ from engineering_quantities import (  # noqa: E402
     QuantityAggregation,
     QuantityComponent,
     QuantityEvaluation,
+    assess_raw_stress_discretization_eligibility,
     build_mesh_convergence_study,
     build_raw_stress_mesh_trend,
     compare_mesh_refinement,
     compare_raw_stress_diagnostic,
+    discretization_error_estimate_to_dict,
+    estimate_mesh_discretization_error,
     evaluate_regional_displacement,
     mesh_refinement_comparison_to_dict,
     mesh_convergence_study_to_dict,
@@ -48,6 +52,7 @@ from numerical_results import (  # noqa: E402
 
 BASELINE_UX_M = 0.000580187226580943
 FINER_UX_M = 0.0005826523352911262
+COARSE_UX_M = 0.0005730201096575444
 
 NODES = {
     1: (0.0, 0.0, 0.0),
@@ -354,6 +359,154 @@ class EngineeringQuantityTests(unittest.TestCase):
         text = json.dumps(serialized, sort_keys=True).lower()
         for forbidden in ("converged", "factor_of_safety", '"fos"', '"status"', '"pass"', '"fail"'):
             self.assertNotIn(forbidden, text)
+
+    def test_bracket_discretization_estimate_regression_and_serialization(self) -> None:
+        evaluations = (
+            evaluation(0.009, COARSE_UX_M, "mesh:coarse"),
+            evaluation(0.006, BASELINE_UX_M, "mesh:baseline"),
+            evaluation(0.004, FINER_UX_M, "mesh:fine"),
+        )
+        study = build_mesh_convergence_study(
+            BRACKET_MESH_STUDY_ID,
+            BRACKET_MESH_STUDY_VERSION,
+            evaluations,
+            LOAD_PAD_UX_REFINEMENT_POLICY,
+        )
+        estimate = estimate_mesh_discretization_error(
+            study, BRACKET_DISCRETIZATION_ESTIMATE_POLICY
+        )
+        self.assertEqual(estimate.eligibility.status, "eligible")
+        self.assertEqual(estimate.grid_sizes_m, (0.009, 0.006, 0.004))
+        self.assertEqual(estimate.refinement_ratios, (1.5, 1.5))
+        self.assertAlmostEqual(estimate.observed_order, 2.6322056859000242)
+        self.assertAlmostEqual(
+            estimate.richardson_extrapolated_value, 0.000583944710947966
+        )
+        self.assertAlmostEqual(
+            estimate.signed_fine_to_extrapolated_difference,
+            1.2923756568397962e-06,
+        )
+        self.assertAlmostEqual(estimate.approximate_relative_error, 0.0042308398351332405)
+        self.assertAlmostEqual(estimate.fine_grid_gci, 0.0027726132261060472)
+        serialized = discretization_error_estimate_to_dict(estimate)
+        self.assertEqual(serialized["interpretation"], "qoi_discretization_evidence")
+        self.assertEqual(serialized["policy"]["safety_factor"], 1.25)
+        self.assertEqual(serialized["relative_values_semantics"], "dimensionless_fraction")
+        self.assertEqual(serialized["asymptotic_range_assessment"], "not_established_v1")
+        first = json.dumps(serialized, sort_keys=True, separators=(",", ":"))
+        second = json.dumps(
+            discretization_error_estimate_to_dict(
+                estimate_mesh_discretization_error(
+                    study, BRACKET_DISCRETIZATION_ESTIMATE_POLICY
+                )
+            ),
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        self.assertEqual(first, second)
+        for forbidden in ("factor_of_safety", '"fos"', '"pass"', '"fail"'):
+            self.assertNotIn(forbidden, first.lower())
+
+    def test_discretization_estimate_ineligible_sequences_have_null_formal_values(self) -> None:
+        cases = (
+            (
+                "near_zero",
+                (1.0, 1.0 + 5e-13, 1.0 + 8e-13),
+                "successive_difference_below_policy_minimum",
+            ),
+            (
+                "oscillatory",
+                (1.0, 1.1, 1.05),
+                "nonmonotonic_sequence",
+            ),
+            (
+                "nonpositive_order",
+                (1.0, 1.1, 1.25),
+                "observed_order_not_positive",
+            ),
+        )
+        for name, values, reason in cases:
+            with self.subTest(name=name):
+                study = build_mesh_convergence_study(
+                    f"test_{name}",
+                    "1",
+                    tuple(
+                        evaluation(size, value, f"mesh:{index}")
+                        for index, (size, value) in enumerate(
+                            zip((0.009, 0.006, 0.004), values)
+                        )
+                    ),
+                    LOAD_PAD_UX_REFINEMENT_POLICY,
+                )
+                estimate = estimate_mesh_discretization_error(
+                    study, BRACKET_DISCRETIZATION_ESTIMATE_POLICY
+                )
+                serialized = discretization_error_estimate_to_dict(estimate)
+                self.assertEqual(serialized["eligibility"]["status"], "ineligible")
+                self.assertEqual(serialized["eligibility"]["reason_code"], reason)
+                for key in (
+                    "observed_order",
+                    "richardson_extrapolated_value",
+                    "fine_grid_gci",
+                    "approximate_relative_error",
+                ):
+                    self.assertIsNone(serialized[key])
+
+    def test_nonuniform_ratio_is_explicitly_ineligible_and_invalid_order_is_rejected(self) -> None:
+        evaluations = (
+            evaluation(0.009, 1.0, "mesh:coarse"),
+            evaluation(0.006, 1.1, "mesh:baseline"),
+            replace(
+                evaluation(0.004, 1.15, "mesh:fine"),
+                mesh=replace(
+                    evaluation(0.004, 1.15, "mesh:fine").mesh,
+                    characteristic_size_m=0.0035,
+                ),
+            ),
+        )
+        study = build_mesh_convergence_study(
+            "nonuniform", "1", evaluations, LOAD_PAD_UX_REFINEMENT_POLICY
+        )
+        estimate = estimate_mesh_discretization_error(
+            study, BRACKET_DISCRETIZATION_ESTIMATE_POLICY
+        )
+        self.assertEqual(
+            estimate.eligibility.reason_code, "nonuniform_refinement_ratio_unsupported"
+        )
+        with self.assertRaisesRegex(ValueError, "smaller characteristic mesh size"):
+            build_mesh_convergence_study(
+                "bad_order",
+                "1",
+                (evaluations[1], evaluations[0], evaluations[2]),
+                LOAD_PAD_UX_REFINEMENT_POLICY,
+            )
+        with self.assertRaisesRegex(ValueError, "finite"):
+            replace(evaluations[0], value=float("nan"))
+
+    def test_raw_stress_sequence_is_ineligible_for_formal_estimate(self) -> None:
+        evaluations = (
+            evaluation(0.009, COARSE_UX_M, "mesh:coarse"),
+            evaluation(0.006, BASELINE_UX_M, "mesh:baseline"),
+            evaluation(0.004, FINER_UX_M, "mesh:fine"),
+        )
+        results = (
+            analysis_result(0.009, 143417306.94058615, 50),
+            analysis_result(0.006, 145277077.43112603, 100),
+            analysis_result(0.004, 164411764.50266418, 200),
+        )
+        diagnostic = build_raw_stress_mesh_trend(results, evaluations)
+        estimate = assess_raw_stress_discretization_eligibility(
+            diagnostic, BRACKET_DISCRETIZATION_ESTIMATE_POLICY
+        )
+        serialized = discretization_error_estimate_to_dict(estimate)
+        self.assertEqual(serialized["interpretation"], "diagnostic_only")
+        self.assertEqual(serialized["eligibility"]["status"], "ineligible")
+        self.assertEqual(
+            serialized["eligibility"]["reason_code"], "observed_order_not_positive"
+        )
+        self.assertIsNone(serialized["observed_order"])
+        self.assertIsNone(serialized["richardson_extrapolated_value"])
+        self.assertIsNone(serialized["fine_grid_gci"])
 
 
 if __name__ == "__main__":
