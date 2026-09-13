@@ -183,6 +183,10 @@ Mesh-specific face/node resolution remains transient numerical mapping. `Quantit
 
 The controlled bracket policy `controlled_bracket_load_pad_average_ux/1` uses a case-specific `1%` relative-change tolerance and `1e-12 m` minimum reference magnitude. These values are verification policy for this fixture only, not a universal FEA rule. The parallel raw integration-point von Mises change is serialized separately as `diagnostic_only`, with no tolerance or decision status.
 
+`MeshConvergenceStudy` V1 contains exactly three evaluations ordered from coarse to fine and the two existing-policy comparisons joining adjacent levels. It validates a common QoI and non-size analysis fingerprint. Its explicit scope is `three_level_mesh_trend_only`. Trend is `stabilizing` only when both absolute and meaningful relative changes strictly decrease; it is `not_stabilizing` when both relative changes are meaningful and either measure does not decrease, and `indeterminate` when the explicit minimum-reference policy makes either relative change unavailable. These labels describe only the tested numerical sequence. They do not assert an exact solution, asymptotic range, mathematical convergence, structural correctness, or physical validation.
+
+The companion three-level raw-stress record retains each global raw integration-point peak, mesh context, and both adjacent changes. It applies the same conservative observed-change classification but remains `diagnostic_only` and has no acceptance policy. Richardson extrapolation, GCI, observed order, and other advanced convergence machinery remain deferred.
+
 ### Spike constraints
 
 The spike does not include a web UI, API product surface, database, authentication, cloud deployment, durable queue, SSE, AI review, distributed execution, production infrastructure, or DFM functionality. It must not introduce a custom finite element solver or speculative infrastructure.

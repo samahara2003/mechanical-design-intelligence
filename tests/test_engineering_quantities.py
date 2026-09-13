@@ -17,6 +17,8 @@ from analysis_results import (  # noqa: E402
 )
 from bracket_definition import BRACKET_LOAD_FACE, bracket_analysis_definition  # noqa: E402
 from bracket_quantities import (  # noqa: E402
+    BRACKET_MESH_STUDY_ID,
+    BRACKET_MESH_STUDY_VERSION,
     LOAD_PAD_AVERAGE_UX,
     LOAD_PAD_UX_REFINEMENT_POLICY,
 )
@@ -24,13 +26,17 @@ from engineering_quantities import (  # noqa: E402
     QuantityAggregation,
     QuantityComponent,
     QuantityEvaluation,
+    build_mesh_convergence_study,
+    build_raw_stress_mesh_trend,
     compare_mesh_refinement,
     compare_raw_stress_diagnostic,
     evaluate_regional_displacement,
     mesh_refinement_comparison_to_dict,
+    mesh_convergence_study_to_dict,
     quantity_evaluation_to_dict,
     quantity_of_interest_to_json,
     raw_stress_diagnostic_to_dict,
+    raw_stress_mesh_trend_to_dict,
 )
 from numerical_results import (  # noqa: E402
     NodalDisplacement,
@@ -84,7 +90,8 @@ def numerical_result(ux_m: float) -> NumericalResult:
 
 def evaluation(mesh_size_m: float, ux_m: float, mesh_identity: str) -> QuantityEvaluation:
     definition = bracket_analysis_definition("4.15.2", "2.23", mesh_size_m)
-    result = analysis_result(mesh_size_m, 1.0, 100 if mesh_size_m == 0.006 else 200)
+    nodes = {0.009: 50, 0.006: 100, 0.004: 200}[mesh_size_m]
+    result = analysis_result(mesh_size_m, 1.0, nodes)
     return evaluate_regional_displacement(
         LOAD_PAD_AVERAGE_UX,
         definition,
@@ -235,6 +242,117 @@ class EngineeringQuantityTests(unittest.TestCase):
         self.assertAlmostEqual(serialized["relative_change"], 0.1317116740637191)
         text = json.dumps(serialized, sort_keys=True).lower()
         for forbidden in ("converged", "factor_of_safety", '"fos"', '"status"', '"pass"'):
+            self.assertNotIn(forbidden, text)
+
+    def test_three_level_study_is_ordered_compatible_and_deterministic(self) -> None:
+        evaluations = (
+            evaluation(0.009, 0.00055, "mesh:coarse"),
+            evaluation(0.006, BASELINE_UX_M, "mesh:baseline"),
+            evaluation(0.004, FINER_UX_M, "mesh:fine"),
+        )
+        study = build_mesh_convergence_study(
+            BRACKET_MESH_STUDY_ID,
+            BRACKET_MESH_STUDY_VERSION,
+            evaluations,
+            LOAD_PAD_UX_REFINEMENT_POLICY,
+        )
+        self.assertEqual(
+            tuple(item.mesh.characteristic_size_m for item in study.evaluations),
+            (0.009, 0.006, 0.004),
+        )
+        self.assertEqual(len({item.quantity for item in study.evaluations}), 1)
+        self.assertEqual(
+            len({item.analysis_comparison_basis_sha256 for item in study.evaluations}), 1
+        )
+        self.assertEqual(len(study.adjacent_comparisons), 2)
+        self.assertAlmostEqual(
+            study.adjacent_comparisons[0].absolute_change,
+            BASELINE_UX_M - 0.00055,
+        )
+        self.assertAlmostEqual(
+            study.adjacent_comparisons[1].relative_change,
+            (FINER_UX_M - BASELINE_UX_M) / BASELINE_UX_M,
+        )
+        self.assertEqual(study.trend, "stabilizing")
+        first = json.dumps(mesh_convergence_study_to_dict(study), sort_keys=True)
+        second = json.dumps(
+            mesh_convergence_study_to_dict(
+                build_mesh_convergence_study(
+                    BRACKET_MESH_STUDY_ID,
+                    BRACKET_MESH_STUDY_VERSION,
+                    evaluations,
+                    LOAD_PAD_UX_REFINEMENT_POLICY,
+                )
+            ),
+            sort_keys=True,
+        )
+        self.assertEqual(first, second)
+        for forbidden in ("converged", "factor_of_safety", '"fos"', '"pass"', '"fail"'):
+            self.assertNotIn(forbidden, first.lower())
+
+    def test_three_level_trend_not_stabilizing_and_indeterminate(self) -> None:
+        not_stabilizing = build_mesh_convergence_study(
+            "test_trend",
+            "1",
+            (
+                evaluation(0.009, 1.0, "mesh:coarse"),
+                evaluation(0.006, 1.1, "mesh:baseline"),
+                evaluation(0.004, 1.25, "mesh:fine"),
+            ),
+            LOAD_PAD_UX_REFINEMENT_POLICY,
+        )
+        self.assertEqual(not_stabilizing.trend, "not_stabilizing")
+        indeterminate = build_mesh_convergence_study(
+            "test_near_zero",
+            "1",
+            (
+                evaluation(0.009, 1e-13, "mesh:coarse"),
+                evaluation(0.006, 2e-13, "mesh:baseline"),
+                evaluation(0.004, 3e-13, "mesh:fine"),
+            ),
+            LOAD_PAD_UX_REFINEMENT_POLICY,
+        )
+        self.assertEqual(indeterminate.trend, "indeterminate")
+        self.assertTrue(
+            all(item.relative_change is None for item in indeterminate.adjacent_comparisons)
+        )
+
+    def test_three_level_study_rejects_a_different_quantity(self) -> None:
+        evaluations = [
+            evaluation(0.009, 1.0, "mesh:coarse"),
+            evaluation(0.006, 1.1, "mesh:baseline"),
+            evaluation(0.004, 1.11, "mesh:fine"),
+        ]
+        evaluations[1] = replace(
+            evaluations[1],
+            quantity=replace(evaluations[1].quantity, component=QuantityComponent.UY),
+        )
+        with self.assertRaisesRegex(ValueError, "same quantity"):
+            build_mesh_convergence_study(
+                "incompatible_study",
+                "1",
+                evaluations,
+                LOAD_PAD_UX_REFINEMENT_POLICY,
+            )
+
+    def test_three_level_raw_stress_is_diagnostic_only(self) -> None:
+        evaluations = (
+            evaluation(0.009, 0.00055, "mesh:coarse"),
+            evaluation(0.006, BASELINE_UX_M, "mesh:baseline"),
+            evaluation(0.004, FINER_UX_M, "mesh:fine"),
+        )
+        results = (
+            analysis_result(0.009, 130e6, 50),
+            analysis_result(0.006, 145277077.43112603, 100),
+            analysis_result(0.004, 164411764.50266418, 200),
+        )
+        study = build_raw_stress_mesh_trend(results, evaluations)
+        serialized = raw_stress_mesh_trend_to_dict(study)
+        self.assertEqual(serialized["interpretation"], "diagnostic_only")
+        self.assertEqual(len(serialized["ordered_mesh_levels"]), 3)
+        self.assertEqual(len(serialized["adjacent_changes"]), 2)
+        text = json.dumps(serialized, sort_keys=True).lower()
+        for forbidden in ("converged", "factor_of_safety", '"fos"', '"status"', '"pass"', '"fail"'):
             self.assertNotIn(forbidden, text)
 
 

@@ -26,3 +26,6 @@ LOAD_PAD_UX_REFINEMENT_POLICY = MeshRefinementComparisonPolicy(
     relative_change_tolerance=0.01,
     minimum_reference_magnitude=1.0e-12,
 )
+
+BRACKET_MESH_STUDY_ID = "controlled_bracket_load_pad_average_ux_three_level"
+BRACKET_MESH_STUDY_VERSION = "1"

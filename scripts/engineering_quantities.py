@@ -176,6 +176,121 @@ class RawStressRefinementDiagnostic:
     relative_change: float | None
     interpretation: str = field(default="diagnostic_only", init=False)
 
+    def __post_init__(self) -> None:
+        if not isinstance(self.reference, GlobalRawMaximumVonMises) or not isinstance(
+            self.refined, GlobalRawMaximumVonMises
+        ):
+            raise TypeError("raw stress diagnostic requires two raw stress peaks")
+        _nonnegative_finite(self.absolute_change_pa, "absolute stress change")
+        if self.relative_change is not None:
+            _nonnegative_finite(self.relative_change, "relative stress change")
+
+
+@dataclass(frozen=True)
+class MeshConvergenceStudy:
+    """Exactly three ordered mesh evaluations and their observed change trend."""
+
+    study_id: str
+    study_version: str
+    quantity: QuantityOfInterest
+    evaluations: tuple[QuantityEvaluation, ...]
+    adjacent_comparisons: tuple[MeshRefinementComparison, ...]
+    trend: str
+    scope: str = field(default="three_level_mesh_trend_only", init=False)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "study_id", _required_text(self.study_id, "study ID"))
+        object.__setattr__(
+            self, "study_version", _required_text(self.study_version, "study version")
+        )
+        evaluations = tuple(self.evaluations)
+        comparisons = tuple(self.adjacent_comparisons)
+        if len(evaluations) != 3:
+            raise ValueError("V1 mesh convergence study requires exactly three levels")
+        if len(comparisons) != 2:
+            raise ValueError("three mesh levels require exactly two adjacent comparisons")
+        if any(item.quantity != self.quantity for item in evaluations):
+            raise ValueError("mesh convergence study requires the same quantity at every level")
+        if any(
+            comparisons[index].reference != evaluations[index]
+            or comparisons[index].refined != evaluations[index + 1]
+            for index in range(2)
+        ):
+            raise ValueError("mesh convergence comparisons must join adjacent ordered levels")
+        if self.trend not in {"stabilizing", "not_stabilizing", "indeterminate"}:
+            raise ValueError("unsupported three-level mesh trend")
+        expected_trend = _three_level_trend(
+            comparisons[0].absolute_change,
+            comparisons[0].relative_change,
+            comparisons[1].absolute_change,
+            comparisons[1].relative_change,
+        )
+        if self.trend != expected_trend:
+            raise ValueError("mesh trend must match its adjacent comparison evidence")
+        object.__setattr__(self, "evaluations", evaluations)
+        object.__setattr__(self, "adjacent_comparisons", comparisons)
+
+
+@dataclass(frozen=True)
+class RawStressLevelEvaluation:
+    """One mesh's global raw integration-point peak and mesh context."""
+
+    mesh_identity: str
+    mesh: MeshSummary
+    peak: GlobalRawMaximumVonMises
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self, "mesh_identity", _required_text(self.mesh_identity, "mesh identity")
+        )
+        if not isinstance(self.mesh, MeshSummary):
+            raise TypeError("raw stress level mesh must be a MeshSummary")
+        if not isinstance(self.peak, GlobalRawMaximumVonMises):
+            raise TypeError("raw stress level peak must be GlobalRawMaximumVonMises")
+
+
+@dataclass(frozen=True)
+class RawStressMeshTrendDiagnostic:
+    """Three raw stress peaks and adjacent changes without acceptance semantics."""
+
+    study_version: str
+    levels: tuple[RawStressLevelEvaluation, ...]
+    adjacent_changes: tuple[RawStressRefinementDiagnostic, ...]
+    observed_change_trend: str
+    scope: str = field(default="three_level_raw_stress_trend_only", init=False)
+    interpretation: str = field(default="diagnostic_only", init=False)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self, "study_version", _required_text(self.study_version, "study version")
+        )
+        levels = tuple(self.levels)
+        changes = tuple(self.adjacent_changes)
+        if len(levels) != 3 or len(changes) != 2:
+            raise ValueError("raw stress trend requires three levels and two adjacent changes")
+        if any(
+            changes[index].reference != levels[index].peak
+            or changes[index].refined != levels[index + 1].peak
+            for index in range(2)
+        ):
+            raise ValueError("raw stress changes must join adjacent ordered levels")
+        if self.observed_change_trend not in {
+            "stabilizing",
+            "not_stabilizing",
+            "indeterminate",
+        }:
+            raise ValueError("unsupported raw stress numerical trend")
+        expected_trend = _three_level_trend(
+            changes[0].absolute_change_pa,
+            changes[0].relative_change,
+            changes[1].absolute_change_pa,
+            changes[1].relative_change,
+        )
+        if self.observed_change_trend != expected_trend:
+            raise ValueError("raw stress trend must match its adjacent change evidence")
+        object.__setattr__(self, "levels", levels)
+        object.__setattr__(self, "adjacent_changes", changes)
+
 
 def quantity_of_interest_to_dict(quantity: QuantityOfInterest) -> dict:
     return {
@@ -364,6 +479,82 @@ def mesh_refinement_comparison_to_dict(comparison: MeshRefinementComparison) -> 
     }
 
 
+def _three_level_trend(
+    first_absolute: float,
+    first_relative: float | None,
+    second_absolute: float,
+    second_relative: float | None,
+) -> str:
+    """Classify only whether both successive change measures decrease."""
+    if first_relative is None or second_relative is None:
+        return "indeterminate"
+    if second_absolute < first_absolute and second_relative < first_relative:
+        return "stabilizing"
+    return "not_stabilizing"
+
+
+def build_mesh_convergence_study(
+    study_id: str,
+    study_version: str,
+    evaluations: Sequence[QuantityEvaluation],
+    policy: MeshRefinementComparisonPolicy,
+) -> MeshConvergenceStudy:
+    """Build the narrow three-level trend from ordered coarse-to-fine values."""
+    ordered = tuple(evaluations)
+    if len(ordered) != 3:
+        raise ValueError("V1 mesh convergence study requires exactly three levels")
+    comparisons = (
+        compare_mesh_refinement(ordered[0], ordered[1], policy),
+        compare_mesh_refinement(ordered[1], ordered[2], policy),
+    )
+    trend = _three_level_trend(
+        comparisons[0].absolute_change,
+        comparisons[0].relative_change,
+        comparisons[1].absolute_change,
+        comparisons[1].relative_change,
+    )
+    return MeshConvergenceStudy(
+        study_id,
+        study_version,
+        ordered[0].quantity,
+        ordered,
+        comparisons,
+        trend,
+    )
+
+
+def mesh_convergence_study_to_dict(study: MeshConvergenceStudy) -> dict:
+    """Serialize the deterministic three-level contract without stronger claims."""
+    return {
+        "study_id": study.study_id,
+        "study_version": study.study_version,
+        "scope": study.scope,
+        "quantity": quantity_of_interest_to_dict(study.quantity),
+        "ordered_mesh_evaluations": [
+            quantity_evaluation_to_dict(item) for item in study.evaluations
+        ],
+        "adjacent_refinement_comparisons": [
+            mesh_refinement_comparison_to_dict(item)
+            for item in study.adjacent_comparisons
+        ],
+        "trend": study.trend,
+        "trend_semantics": {
+            "stabilizing": (
+                "both absolute and relative changes strictly decrease from the first "
+                "adjacent pair to the second"
+            ),
+            "not_stabilizing": (
+                "both relative changes are meaningful and at least one successive "
+                "change measure does not strictly decrease"
+            ),
+            "indeterminate": (
+                "at least one relative change is unavailable under the explicit "
+                "minimum-reference policy"
+            ),
+        },
+    }
+
+
 def compare_raw_stress_diagnostic(
     reference_result: AnalysisResult,
     refined_result: AnalysisResult,
@@ -391,4 +582,82 @@ def raw_stress_diagnostic_to_dict(diagnostic: RawStressRefinementDiagnostic) -> 
         "refined": peak(diagnostic.refined),
         "absolute_change_pa": diagnostic.absolute_change_pa,
         "relative_change": diagnostic.relative_change,
+    }
+
+
+def build_raw_stress_mesh_trend(
+    results: Sequence[AnalysisResult],
+    quantity_evaluations: Sequence[QuantityEvaluation],
+    *,
+    study_version: str = "1",
+) -> RawStressMeshTrendDiagnostic:
+    """Collect raw global peaks across the same three ordered mesh executions."""
+    result_levels = tuple(results)
+    evaluations = tuple(quantity_evaluations)
+    if len(result_levels) != 3 or len(evaluations) != 3:
+        raise ValueError("raw stress trend requires exactly three result/evaluation levels")
+    model_versions = {item.model_version for item in result_levels}
+    if len(model_versions) != 1:
+        raise ValueError("raw stress trend requires one model version")
+    if any(
+        result_levels[index].mesh != evaluations[index].mesh for index in range(3)
+    ):
+        raise ValueError("raw stress and quantity levels must use the same meshes")
+    levels = tuple(
+        RawStressLevelEvaluation(
+            evaluations[index].mesh_identity,
+            result_levels[index].mesh,
+            result_levels[index].stress.global_raw_max_von_mises,
+        )
+        for index in range(3)
+    )
+    changes = (
+        compare_raw_stress_diagnostic(result_levels[0], result_levels[1]),
+        compare_raw_stress_diagnostic(result_levels[1], result_levels[2]),
+    )
+    trend = _three_level_trend(
+        changes[0].absolute_change_pa,
+        changes[0].relative_change,
+        changes[1].absolute_change_pa,
+        changes[1].relative_change,
+    )
+    return RawStressMeshTrendDiagnostic(study_version, levels, changes, trend)
+
+
+def raw_stress_mesh_trend_to_dict(study: RawStressMeshTrendDiagnostic) -> dict:
+    """Serialize raw stress changes with diagnostic-only interpretation."""
+    return {
+        "study_version": study.study_version,
+        "scope": study.scope,
+        "interpretation": study.interpretation,
+        "ordered_mesh_levels": [
+            {
+                "mesh_identity": level.mesh_identity,
+                "mesh_summary": {
+                    "node_count": level.mesh.node_count,
+                    "element_count": level.mesh.element_count,
+                    "element_type": level.mesh.element_type,
+                    "characteristic_size_m": level.mesh.characteristic_size_m,
+                },
+                "global_raw_maximum_von_mises": {
+                    "von_mises_pa": level.peak.von_mises_pa,
+                    "element_id": level.peak.element_id,
+                    "integration_point": level.peak.integration_point,
+                    "position_m": (
+                        None
+                        if level.peak.location_m is None
+                        else list(level.peak.location_m.as_tuple())
+                    ),
+                },
+            }
+            for level in study.levels
+        ],
+        "adjacent_changes": [
+            raw_stress_diagnostic_to_dict(item) for item in study.adjacent_changes
+        ],
+        "observed_change_trend": study.observed_change_trend,
+        "trend_semantics": (
+            "observed adjacent absolute and relative change magnitudes only; "
+            "no acceptance or stronger inference"
+        ),
     }

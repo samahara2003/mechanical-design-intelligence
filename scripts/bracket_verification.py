@@ -1,4 +1,4 @@
-"""Run and review baseline/finer meshes for the realistic bracket integration case."""
+"""Run and review three mesh levels for the realistic bracket integration case."""
 
 from __future__ import annotations
 
@@ -24,21 +24,29 @@ from bracket_definition import (
     BASELINE_MESH_SIZE_M,
     BRACKET_FORCE,
     BRACKET_LOAD_FACE,
+    COARSE_MESH_SIZE_M,
     FINER_MESH_SIZE_M,
     bracket_analysis_definition,
 )
-from bracket_quantities import LOAD_PAD_AVERAGE_UX, LOAD_PAD_UX_REFINEMENT_POLICY
+from bracket_quantities import (
+    BRACKET_MESH_STUDY_ID,
+    BRACKET_MESH_STUDY_VERSION,
+    LOAD_PAD_AVERAGE_UX,
+    LOAD_PAD_UX_REFINEMENT_POLICY,
+)
 from calculix_results import CalculixResultParseError, parse_calculix_dat
 from engineering_assessment import engineering_assessment_to_dict
 from engineering_domain import analysis_definition_to_dict
 from engineering_quantities import (
     QuantityEvaluation,
-    compare_mesh_refinement,
-    compare_raw_stress_diagnostic,
+    build_mesh_convergence_study,
+    build_raw_stress_mesh_trend,
     evaluate_regional_displacement,
+    mesh_convergence_study_to_dict,
     mesh_refinement_comparison_to_dict,
     quantity_evaluation_to_dict,
     raw_stress_diagnostic_to_dict,
+    raw_stress_mesh_trend_to_dict,
 )
 from generate_bracket_mesh import (
     BASE_LENGTH_M,
@@ -62,7 +70,11 @@ from run_cantilever_solve import as_calculix_c3d10, read_msh
 from surface_load_mapping import map_uniform_force_to_c3d10_faces, triangle_area
 
 
-LEVELS = (("baseline", BASELINE_MESH_SIZE_M), ("finer", FINER_MESH_SIZE_M))
+LEVELS = (
+    ("coarse", COARSE_MESH_SIZE_M),
+    ("baseline", BASELINE_MESH_SIZE_M),
+    ("fine", FINER_MESH_SIZE_M),
+)
 GAUSS_LOW = 0.138196601125011
 GAUSS_HIGH = 0.585410196624968
 GAUSS_NATURAL_COORDINATES = (
@@ -291,11 +303,15 @@ def main() -> int:
         levels = [item[0] for item in analyzed]
         evaluations = [item[1] for item in analyzed]
         results = [item[2] for item in analyzed]
-        baseline, finer = levels
-        refinement = compare_mesh_refinement(
-            evaluations[0], evaluations[1], LOAD_PAD_UX_REFINEMENT_POLICY
+        mesh_study = build_mesh_convergence_study(
+            BRACKET_MESH_STUDY_ID,
+            BRACKET_MESH_STUDY_VERSION,
+            evaluations,
+            LOAD_PAD_UX_REFINEMENT_POLICY,
         )
-        stress_diagnostic = compare_raw_stress_diagnostic(results[0], results[1])
+        refinement = mesh_study.adjacent_comparisons[1]
+        raw_stress_study = build_raw_stress_mesh_trend(results, evaluations)
+        stress_diagnostic = raw_stress_study.adjacent_changes[1]
         base_qoi = refinement.reference.value
         fine_qoi = refinement.refined.value
         base_stress = stress_diagnostic.reference.von_mises_pa
@@ -337,6 +353,10 @@ def main() -> int:
                 "selection": "named STEP faces re-identified after import by dimensional bounding boxes and exact-count checks",
             },
             "levels": levels,
+            "mesh_convergence_study": mesh_convergence_study_to_dict(mesh_study),
+            "raw_stress_mesh_trend": raw_stress_mesh_trend_to_dict(
+                raw_stress_study
+            ),
             "mesh_refinement_comparison": mesh_refinement_comparison_to_dict(refinement),
             "raw_stress_refinement_diagnostic": raw_stress_diagnostic_to_dict(
                 stress_diagnostic
@@ -351,7 +371,7 @@ def main() -> int:
                     "fully fixed mounting bores idealize bolts, washer contact, preload, friction, and base compliance",
                     "uniform vector traction on the load-pad face idealizes the attached component",
                     "global raw stress peaks can remain mesh-sensitive near idealized constraints and geometric features",
-                    "two meshes are sensitivity evidence, not formal mesh independence",
+                    "three meshes are trend evidence, not demonstrated convergence or mesh independence",
                     "no analytical whole-part solution, experimental validation, FoS, or pass/fail claim is made",
                 ],
             },

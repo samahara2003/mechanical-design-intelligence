@@ -37,6 +37,7 @@ BRACKET_FIXED_BOUNDARY = BoundaryCondition(
     target=BRACKET_MOUNTING_FACES,
     constrained_dofs=(TranslationalDof.UX, TranslationalDof.UY, TranslationalDof.UZ),
 )
+COARSE_MESH_SIZE_M = 0.009
 BASELINE_MESH_SIZE_M = 0.006
 FINER_MESH_SIZE_M = 0.004
 
