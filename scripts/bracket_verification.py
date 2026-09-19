@@ -67,6 +67,7 @@ from engineering_quantities import (
 from engineering_stress import (
     FeatureRelationshipEvidence,
     LocatedStressFeatureEvidence,
+    PhysicalCoordinateBoxRegion,
     RegionalStressEvidence,
     SpatialStressBandEvidence,
     build_regional_stress_mesh_study,
@@ -271,20 +272,37 @@ def regional_maximum_feature_evidence(
 
 
 def analyze_level(
-    repository: Path, root: Path, name: str, mesh_size: float, step_path: Path
+    repository: Path,
+    root: Path,
+    name: str,
+    mesh_size: float,
+    step_path: Path,
+    *,
+    root_local_size_m: float | None = None,
+    feature_stress_region: PhysicalCoordinateBoxRegion | None = None,
 ) -> tuple[
     dict,
     QuantityEvaluation,
     AnalysisResult,
     RegionalStressEvidence,
     tuple[SpatialStressBandEvidence, ...],
+    RegionalStressEvidence | None,
 ]:
     scripts = repository / "scripts"
     output_dir = root / name
-    mesh, mesh_runtime = run_json(
-        [sys.executable, str(scripts / "generate_bracket_mesh.py"), "--output-dir", str(output_dir), "--step-path", str(step_path), "--mesh-size", str(mesh_size)],
-        repository,
-    )
+    mesh_command = [
+        sys.executable,
+        str(scripts / "generate_bracket_mesh.py"),
+        "--output-dir",
+        str(output_dir),
+        "--step-path",
+        str(step_path),
+        "--mesh-size",
+        str(mesh_size),
+    ]
+    if root_local_size_m is not None:
+        mesh_command.extend(("--root-local-size", str(root_local_size_m)))
+    mesh, mesh_runtime = run_json(mesh_command, repository)
     solve, solve_runtime = run_json(
         [sys.executable, str(scripts / "run_bracket_solve.py"), "--output-dir", str(output_dir)],
         repository,
@@ -376,6 +394,16 @@ def analyze_level(
         mesh_identity=f"sha256:{provenance.mesh.sha256}",
         mesh=result.mesh,
     )
+    feature_stress = (
+        None
+        if feature_stress_region is None
+        else evaluate_regional_stress(
+            feature_stress_region,
+            located_numerical,
+            mesh_identity=f"sha256:{provenance.mesh.sha256}",
+            mesh=result.mesh,
+        )
+    )
     if not math.isclose(quantity_evaluation.value, qoi[0], rel_tol=0.0, abs_tol=1e-15):
         raise BracketVerificationError(
             "reusable QoI evaluation differs from existing integration"
@@ -393,6 +421,7 @@ def analyze_level(
         "regional_stress_evidence": regional_stress_evidence_to_dict(regional_stress),
         "analysis_provenance": analysis_provenance_to_dict(provenance),
         "mesh_quality": mesh["quality"],
+        "mesh_sizing": mesh["mesh_sizing"],
         "gmsh_warnings": mesh["gmsh_warnings"],
         "solver_warnings": solve["sanity"]["solver_warnings"],
         "load_pad_area_average_displacement_qoi": {
@@ -411,7 +440,14 @@ def analyze_level(
         "fixed_node_maximum_displacement_m": solve["sanity"]["maximum_fixed_node_displacement_m"],
         "runtimes_seconds": {"mesh": mesh_runtime, "solve": solve_runtime},
     }
-    return record, quantity_evaluation, result, regional_stress, spatial_band_evidence
+    return (
+        record,
+        quantity_evaluation,
+        result,
+        regional_stress,
+        spatial_band_evidence,
+        feature_stress,
+    )
 
 
 def main() -> int:

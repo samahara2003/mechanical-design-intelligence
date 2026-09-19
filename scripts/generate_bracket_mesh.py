@@ -46,6 +46,9 @@ LOAD_PAD_Z_MAX_M = 0.110
 LOAD_FACE_AREA_M2 = (LOAD_PAD_Y_MAX_M - LOAD_PAD_Y_MIN_M) * (
     LOAD_PAD_Z_MAX_M - LOAD_PAD_Z_MIN_M
 )
+ROOT_LOCAL_SIZING_MIN_M = (0.108, 0.0, 0.006)
+ROOT_LOCAL_SIZING_MAX_M = (0.140, BASE_WIDTH_M, 0.036)
+ROOT_LOCAL_TRANSITION_THICKNESS_M = 0.006
 PHYSICAL_GROUPS = {
     BRACKET_VOLUME.region_name: {"dimension": 3, "tag": 1},
     BRACKET_MOUNTING_FACES.region_name: {"dimension": 2, "tag": 2},
@@ -78,7 +81,12 @@ Save "{gmsh_path(step_path)}";
 
 
 def write_mesh_script(
-    path: Path, step_path: Path, msh_path: Path, inp_path: Path, mesh_size_m: float
+    path: Path,
+    step_path: Path,
+    msh_path: Path,
+    inp_path: Path,
+    mesh_size_m: float,
+    root_local_size_m: float | None = None,
 ) -> None:
     holes = []
     for index, (x, y) in enumerate(MOUNTING_HOLE_CENTRES_M):
@@ -87,6 +95,23 @@ def write_mesh_script(
             f'{y-MOUNTING_HOLE_RADIUS_M}-eps, -eps, {x+MOUNTING_HOLE_RADIUS_M}+eps, '
             f'{y+MOUNTING_HOLE_RADIUS_M}+eps, {BASE_THICKNESS_M}+eps}};'
         )
+    local_size = mesh_size_m if root_local_size_m is None else root_local_size_m
+    local_field = ""
+    if root_local_size_m is not None:
+        local_field = f'''Field[1] = Box;
+Field[1].VIn = {root_local_size_m};
+Field[1].VOut = {mesh_size_m};
+Field[1].XMin = {ROOT_LOCAL_SIZING_MIN_M[0]};
+Field[1].XMax = {ROOT_LOCAL_SIZING_MAX_M[0]};
+Field[1].YMin = {ROOT_LOCAL_SIZING_MIN_M[1]};
+Field[1].YMax = {ROOT_LOCAL_SIZING_MAX_M[1]};
+Field[1].ZMin = {ROOT_LOCAL_SIZING_MIN_M[2]};
+Field[1].ZMax = {ROOT_LOCAL_SIZING_MAX_M[2]};
+Field[1].Thickness = {ROOT_LOCAL_TRANSITION_THICKNESS_M};
+Background Field = 1;
+Mesh.MeshSizeFromPoints = 0;
+Mesh.MeshSizeFromCurvature = 0;
+Mesh.MeshSizeExtendFromBoundary = 0;'''
     path.write_text(
         f'''// Re-import STEP; resolve semantic regions geometrically; create C3D10 mesh.
 SetFactory("OpenCASCADE");
@@ -109,8 +134,9 @@ EndIf
 Physical Volume("{BRACKET_VOLUME.region_name}", 1) = {{volumes[]}};
 Physical Surface("{BRACKET_MOUNTING_FACES.region_name}", 2) = {{hole0[], hole1[]}};
 Physical Surface("{BRACKET_LOAD_FACE.region_name}", 3) = {{loadPad[]}};
-Mesh.MeshSizeMin = {mesh_size_m};
+Mesh.MeshSizeMin = {local_size};
 Mesh.MeshSizeMax = {mesh_size_m};
+{local_field}
 Mesh.Algorithm3D = 1;
 Mesh.ElementOrder = {ELEMENT_TYPES['C3D10']['order']};
 Mesh.MshFileVersion = 2.2;
@@ -163,6 +189,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--step-path", type=Path, required=True)
     parser.add_argument("--mesh-size", type=float, default=BASELINE_MESH_SIZE_M)
+    parser.add_argument("--root-local-size", type=float)
     return parser.parse_args()
 
 
@@ -170,6 +197,12 @@ def main() -> int:
     args = parse_args()
     if not 0.0 < args.mesh_size <= BASE_THICKNESS_M:
         print("error: mesh size must be positive and no larger than plate thickness", file=sys.stderr)
+        return 2
+    if args.root_local_size is not None and not 0.0 < args.root_local_size <= args.mesh_size:
+        print(
+            "error: root local size must be positive and no larger than far-field mesh size",
+            file=sys.stderr,
+        )
         return 2
     gmsh = shutil.which("gmsh")
     if gmsh is None:
@@ -188,7 +221,14 @@ def main() -> int:
         if not step_path.is_file():
             write_fixture_script(fixture_script, step_path)
             run_gmsh(gmsh, fixture_script)
-        write_mesh_script(mesh_script, step_path, msh_path, inp_path, args.mesh_size)
+        write_mesh_script(
+            mesh_script,
+            step_path,
+            msh_path,
+            inp_path,
+            args.mesh_size,
+            args.root_local_size,
+        )
         gmsh_output = run_gmsh(gmsh, mesh_script)
         match = re.search(r"MDI_BRACKET_GEOMETRY volumes=(\d+) surfaces=(\d+) fixed=(\d+) load=(\d+)", gmsh_output)
         if match is None:
@@ -202,7 +242,26 @@ def main() -> int:
     summary = {
         "status": "ok", "units": "SI", "gmsh_version": version,
         "geometry": dict(zip(("volumes", "surfaces", "fixed", "load"), map(int, match.groups()))),
-        "mesh_size_m": args.mesh_size, "mesh": mesh, "quality": quality,
+        "mesh_size_m": args.mesh_size,
+        "mesh_sizing": {
+            "mode": (
+                "root_transition_box_field"
+                if args.root_local_size is not None
+                else "uniform"
+            ),
+            "far_field_size_m": args.mesh_size,
+            "root_local_target_size_m": args.root_local_size,
+            "root_local_sizing_bounds_m": (
+                {
+                    "minimum": list(ROOT_LOCAL_SIZING_MIN_M),
+                    "maximum": list(ROOT_LOCAL_SIZING_MAX_M),
+                    "transition_thickness_m": ROOT_LOCAL_TRANSITION_THICKNESS_M,
+                }
+                if args.root_local_size is not None
+                else None
+            ),
+        },
+        "mesh": mesh, "quality": quality,
         "gmsh_warnings": warnings,
         "artifacts": {
             "step": str(step_path), "step_sha256": hashlib.sha256(step_path.read_bytes()).hexdigest(),
