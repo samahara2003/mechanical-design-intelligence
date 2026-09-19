@@ -29,6 +29,7 @@ from bracket_definition import (
     bracket_analysis_definition,
 )
 from bracket_quantities import (
+    BRACKET_ASYMPTOTIC_CONSISTENCY_POLICY,
     BRACKET_DISCRETIZATION_ESTIMATE_POLICY,
     BRACKET_MESH_STUDY_ID,
     BRACKET_MESH_STUDY_VERSION,
@@ -41,6 +42,8 @@ from engineering_domain import analysis_definition_to_dict
 from engineering_quantities import (
     QuantityEvaluation,
     assess_raw_stress_discretization_eligibility,
+    asymptotic_consistency_evidence_to_dict,
+    build_asymptotic_consistency_evidence,
     build_mesh_convergence_study,
     build_raw_stress_mesh_trend,
     discretization_error_estimate_to_dict,
@@ -321,6 +324,12 @@ def main() -> int:
         raw_stress_error_eligibility = assess_raw_stress_discretization_eligibility(
             raw_stress_study, BRACKET_DISCRETIZATION_ESTIMATE_POLICY
         )
+        displacement_asymptotic_consistency = build_asymptotic_consistency_evidence(
+            displacement_error_estimate, BRACKET_ASYMPTOTIC_CONSISTENCY_POLICY
+        )
+        raw_stress_asymptotic_consistency = build_asymptotic_consistency_evidence(
+            raw_stress_error_eligibility, BRACKET_ASYMPTOTIC_CONSISTENCY_POLICY
+        )
         stress_diagnostic = raw_stress_study.adjacent_changes[1]
         base_qoi = refinement.reference.value
         fine_qoi = refinement.refined.value
@@ -367,11 +376,21 @@ def main() -> int:
             "displacement_discretization_error_estimate": (
                 discretization_error_estimate_to_dict(displacement_error_estimate)
             ),
+            "displacement_asymptotic_consistency": (
+                asymptotic_consistency_evidence_to_dict(
+                    displacement_asymptotic_consistency
+                )
+            ),
             "raw_stress_mesh_trend": raw_stress_mesh_trend_to_dict(
                 raw_stress_study
             ),
             "raw_stress_discretization_eligibility": (
                 discretization_error_estimate_to_dict(raw_stress_error_eligibility)
+            ),
+            "raw_stress_asymptotic_consistency": (
+                asymptotic_consistency_evidence_to_dict(
+                    raw_stress_asymptotic_consistency
+                )
             ),
             "mesh_refinement_comparison": mesh_refinement_comparison_to_dict(refinement),
             "raw_stress_refinement_diagnostic": raw_stress_diagnostic_to_dict(

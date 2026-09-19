@@ -17,6 +17,7 @@ from analysis_results import (  # noqa: E402
 )
 from bracket_definition import BRACKET_LOAD_FACE, bracket_analysis_definition  # noqa: E402
 from bracket_quantities import (  # noqa: E402
+    BRACKET_ASYMPTOTIC_CONSISTENCY_POLICY,
     BRACKET_DISCRETIZATION_ESTIMATE_POLICY,
     BRACKET_MESH_STUDY_ID,
     BRACKET_MESH_STUDY_VERSION,
@@ -28,6 +29,8 @@ from engineering_quantities import (  # noqa: E402
     QuantityComponent,
     QuantityEvaluation,
     assess_raw_stress_discretization_eligibility,
+    asymptotic_consistency_evidence_to_dict,
+    build_asymptotic_consistency_evidence,
     build_mesh_convergence_study,
     build_raw_stress_mesh_trend,
     compare_mesh_refinement,
@@ -507,6 +510,120 @@ class EngineeringQuantityTests(unittest.TestCase):
         self.assertIsNone(serialized["observed_order"])
         self.assertIsNone(serialized["richardson_extrapolated_value"])
         self.assertIsNone(serialized["fine_grid_gci"])
+
+    def test_bracket_adjacent_gci_pair_and_consistency_regression(self) -> None:
+        study = build_mesh_convergence_study(
+            BRACKET_MESH_STUDY_ID,
+            BRACKET_MESH_STUDY_VERSION,
+            (
+                evaluation(0.009, COARSE_UX_M, "mesh:coarse"),
+                evaluation(0.006, BASELINE_UX_M, "mesh:baseline"),
+                evaluation(0.004, FINER_UX_M, "mesh:fine"),
+            ),
+            LOAD_PAD_UX_REFINEMENT_POLICY,
+        )
+        estimate = estimate_mesh_discretization_error(
+            study, BRACKET_DISCRETIZATION_ESTIMATE_POLICY
+        )
+        evidence = build_asymptotic_consistency_evidence(
+            estimate, BRACKET_ASYMPTOTIC_CONSISTENCY_POLICY
+        )
+        self.assertAlmostEqual(estimate.coarse_medium_gci, 0.008095413417591617)
+        self.assertAlmostEqual(estimate.fine_grid_gci, 0.0027726132261060472)
+        self.assertAlmostEqual(evidence.consistency_ratio, 1.0042488158946725)
+        self.assertEqual(evidence.status, "consistent")
+        serialized = asymptotic_consistency_evidence_to_dict(evidence)
+        self.assertEqual(serialized["gci_32"], estimate.coarse_medium_gci)
+        self.assertEqual(serialized["gci_21"], estimate.fine_grid_gci)
+        self.assertEqual(serialized["policy"]["target_ratio"], 1.0)
+        self.assertEqual(serialized["policy"]["allowable_absolute_deviation"], 0.01)
+        self.assertEqual(
+            serialized["policy"]["formula_identity"],
+            "gci_32_over_r_to_p_gci_21",
+        )
+        first = json.dumps(serialized, sort_keys=True, separators=(",", ":"))
+        second = json.dumps(
+            asymptotic_consistency_evidence_to_dict(
+                build_asymptotic_consistency_evidence(
+                    estimate, BRACKET_ASYMPTOTIC_CONSISTENCY_POLICY
+                )
+            ),
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        self.assertEqual(first, second)
+        for forbidden in (
+            "physical_validation",
+            "factor_of_safety",
+            '"fos"',
+            '"failure"',
+            '"pass"',
+            "structural_pass_fail",
+            "universal_convergence",
+        ):
+            self.assertNotIn(forbidden, first.lower())
+
+    def test_asymptotic_consistency_outside_tolerance_and_denominator_policy(self) -> None:
+        study = build_mesh_convergence_study(
+            "synthetic_outside_consistency",
+            "1",
+            (
+                evaluation(0.009, 1.0, "mesh:coarse"),
+                evaluation(0.006, 2.0, "mesh:medium"),
+                evaluation(0.004, 2.5, "mesh:fine"),
+            ),
+            LOAD_PAD_UX_REFINEMENT_POLICY,
+        )
+        estimate = estimate_mesh_discretization_error(
+            study, BRACKET_DISCRETIZATION_ESTIMATE_POLICY
+        )
+        evidence = build_asymptotic_consistency_evidence(
+            estimate, BRACKET_ASYMPTOTIC_CONSISTENCY_POLICY
+        )
+        self.assertAlmostEqual(evidence.consistency_ratio, 1.25)
+        self.assertEqual(evidence.status, "outside_tolerance")
+        denominator_guard = replace(
+            BRACKET_ASYMPTOTIC_CONSISTENCY_POLICY,
+            minimum_denominator=1.0,
+        )
+        guarded = build_asymptotic_consistency_evidence(estimate, denominator_guard)
+        self.assertEqual(guarded.status, "not_applicable")
+        self.assertEqual(guarded.reason_code, "invalid_consistency_denominator")
+
+    def test_ineligible_and_raw_stress_consistency_are_not_applicable(self) -> None:
+        evaluations = (
+            evaluation(0.009, COARSE_UX_M, "mesh:coarse"),
+            evaluation(0.006, BASELINE_UX_M, "mesh:baseline"),
+            evaluation(0.004, FINER_UX_M, "mesh:fine"),
+        )
+        raw_estimate = assess_raw_stress_discretization_eligibility(
+            build_raw_stress_mesh_trend(
+                (
+                    analysis_result(0.009, 143417306.94058615, 50),
+                    analysis_result(0.006, 145277077.43112603, 100),
+                    analysis_result(0.004, 164411764.50266418, 200),
+                ),
+                evaluations,
+            ),
+            BRACKET_DISCRETIZATION_ESTIMATE_POLICY,
+        )
+        evidence = build_asymptotic_consistency_evidence(
+            raw_estimate, BRACKET_ASYMPTOTIC_CONSISTENCY_POLICY
+        )
+        serialized = asymptotic_consistency_evidence_to_dict(evidence)
+        self.assertEqual(serialized["status"], "not_applicable")
+        self.assertEqual(serialized["interpretation"], "diagnostic_only")
+        self.assertEqual(
+            serialized["reason_code"], "formal_discretization_estimate_ineligible"
+        )
+        for key in (
+            "gci_32",
+            "gci_21",
+            "refinement_ratio",
+            "observed_order",
+            "asymptotic_consistency_ratio",
+        ):
+            self.assertIsNone(serialized[key])
 
 
 if __name__ == "__main__":

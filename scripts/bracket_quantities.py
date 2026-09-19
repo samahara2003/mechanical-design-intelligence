@@ -2,6 +2,7 @@
 
 from bracket_definition import BRACKET_LOAD_FACE
 from engineering_quantities import (
+    AsymptoticConsistencyPolicy,
     DiscretizationErrorEstimatePolicy,
     MeshRefinementComparisonPolicy,
     QuantityAggregation,
@@ -38,4 +39,13 @@ BRACKET_DISCRETIZATION_ESTIMATE_POLICY = DiscretizationErrorEstimatePolicy(
     minimum_difference_magnitude=1.0e-12,
     minimum_relative_reference_magnitude=1.0e-12,
     refinement_ratio_relative_tolerance=1.0e-12,
+)
+
+BRACKET_ASYMPTOTIC_CONSISTENCY_POLICY = AsymptoticConsistencyPolicy(
+    policy_name="controlled_bracket_asymptotic_consistency",
+    policy_version="1",
+    formula_identity="gci_32_over_r_to_p_gci_21",
+    target_ratio=1.0,
+    allowable_absolute_deviation=0.01,
+    minimum_denominator=1.0e-15,
 )

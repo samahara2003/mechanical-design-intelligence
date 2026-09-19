@@ -365,6 +365,8 @@ class DiscretizationErrorEstimate:
     signed_fine_to_extrapolated_difference: float | None
     absolute_fine_to_extrapolated_difference: float | None
     relative_fine_to_extrapolated_difference: float | None
+    coarse_medium_approximate_relative_error: float | None
+    coarse_medium_gci: float | None
     approximate_relative_error: float | None
     fine_grid_gci: float | None
     scope: str = field(default="three_grid_discretization_estimate_only", init=False)
@@ -397,6 +399,8 @@ class DiscretizationErrorEstimate:
             self.richardson_extrapolated_value,
             self.signed_fine_to_extrapolated_difference,
             self.absolute_fine_to_extrapolated_difference,
+            self.coarse_medium_approximate_relative_error,
+            self.coarse_medium_gci,
             self.approximate_relative_error,
             self.fine_grid_gci,
         )
@@ -413,6 +417,11 @@ class DiscretizationErrorEstimate:
                 self.absolute_fine_to_extrapolated_difference,
                 "absolute fine-to-extrapolated difference",
             )
+            _nonnegative_finite(
+                self.coarse_medium_approximate_relative_error,
+                "coarse/medium approximate relative error",
+            )
+            _nonnegative_finite(self.coarse_medium_gci, "coarse/medium GCI")
             _nonnegative_finite(self.approximate_relative_error, "approximate relative error")
             if self.relative_fine_to_extrapolated_difference is not None:
                 _nonnegative_finite(
@@ -421,6 +430,108 @@ class DiscretizationErrorEstimate:
                 )
         object.__setattr__(self, "grid_sizes_m", sizes)
         object.__setattr__(self, "refinement_ratios", ratios)
+
+
+@dataclass(frozen=True)
+class AsymptoticConsistencyPolicy:
+    """Explicit policy for the V1 adjacent-GCI consistency relation."""
+
+    policy_name: str
+    policy_version: str
+    formula_identity: str
+    target_ratio: float
+    allowable_absolute_deviation: float
+    minimum_denominator: float
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "policy_name", _required_text(self.policy_name, "policy name"))
+        object.__setattr__(
+            self, "policy_version", _required_text(self.policy_version, "policy version")
+        )
+        object.__setattr__(
+            self, "formula_identity", _required_text(self.formula_identity, "formula identity")
+        )
+        if self.formula_identity != "gci_32_over_r_to_p_gci_21":
+            raise ValueError("unsupported asymptotic-consistency formula identity")
+        if not math.isfinite(self.target_ratio) or self.target_ratio <= 0.0:
+            raise ValueError("asymptotic-consistency target ratio must be positive and finite")
+        _nonnegative_finite(
+            self.allowable_absolute_deviation,
+            "asymptotic-consistency allowable absolute deviation",
+        )
+        _nonnegative_finite(
+            self.minimum_denominator,
+            "asymptotic-consistency minimum denominator",
+        )
+
+
+@dataclass(frozen=True)
+class AsymptoticConsistencyEvidence:
+    """Deterministic check of the adjacent-GCI asymptotic relation."""
+
+    evidence_version: str
+    source_study_id: str
+    quantity_id: str
+    interpretation: str
+    policy: AsymptoticConsistencyPolicy
+    status: str
+    reason_code: str | None
+    gci_32: float | None
+    gci_21: float | None
+    refinement_ratio: float | None
+    observed_order: float | None
+    consistency_ratio: float | None
+    absolute_deviation: float | None
+    scope: str = field(default="adjacent_gci_asymptotic_consistency_only", init=False)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self, "evidence_version", _required_text(self.evidence_version, "evidence version")
+        )
+        object.__setattr__(
+            self, "source_study_id", _required_text(self.source_study_id, "source study ID")
+        )
+        object.__setattr__(self, "quantity_id", _required_text(self.quantity_id, "quantity ID"))
+        if self.interpretation not in {"qoi_discretization_evidence", "diagnostic_only"}:
+            raise ValueError("unsupported asymptotic-consistency interpretation")
+        if not isinstance(self.policy, AsymptoticConsistencyPolicy):
+            raise TypeError("asymptotic-consistency evidence requires an explicit policy")
+        if self.status not in {"consistent", "outside_tolerance", "not_applicable"}:
+            raise ValueError("unsupported asymptotic-consistency status")
+        values = (
+            self.gci_32,
+            self.gci_21,
+            self.refinement_ratio,
+            self.observed_order,
+            self.consistency_ratio,
+            self.absolute_deviation,
+        )
+        if self.status == "not_applicable":
+            object.__setattr__(
+                self, "reason_code", _required_text(self.reason_code, "not-applicable reason")
+            )
+            if any(value is not None for value in values):
+                raise ValueError("not-applicable consistency evidence must not carry GCI results")
+        else:
+            if self.reason_code is not None:
+                raise ValueError("applicable consistency evidence must not carry a reason code")
+            if any(value is None or not math.isfinite(value) for value in values):
+                raise ValueError("applicable consistency evidence requires finite numerical values")
+            if self.gci_32 < 0.0 or self.gci_21 < 0.0:
+                raise ValueError("GCI values must be nonnegative")
+            if self.refinement_ratio <= 1.0 or self.observed_order <= 0.0:
+                raise ValueError("consistency evidence requires valid ratio and observed order")
+            _nonnegative_finite(self.absolute_deviation, "consistency-ratio deviation")
+            expected_deviation = abs(self.consistency_ratio - self.policy.target_ratio)
+            if self.absolute_deviation != expected_deviation:
+                raise ValueError("consistency-ratio deviation must match the policy target")
+            expected_status = (
+                "consistent"
+                if expected_deviation <= self.policy.allowable_absolute_deviation
+                else "outside_tolerance"
+            )
+            if self.status != expected_status:
+                raise ValueError("consistency status must match its numerical evidence")
 
 
 def quantity_of_interest_to_dict(quantity: QuantityOfInterest) -> dict:
@@ -717,6 +828,8 @@ def _ineligible_discretization_estimate(
         None,
         None,
         None,
+        None,
+        None,
     )
 
 
@@ -847,6 +960,10 @@ def _estimate_three_grid_values(
             reason="fine-grid magnitude is too small for the relative-error and GCI definitions",
             interpretation=interpretation,
         )
+    coarse_medium_approximate_relative_error = abs(delta32 / phi2)
+    coarse_medium_gci = (
+        policy.safety_factor * coarse_medium_approximate_relative_error / denominator
+    )
     approximate_relative_error = abs(delta21 / phi1)
     fine_grid_gci = policy.safety_factor * approximate_relative_error / denominator
     return DiscretizationErrorEstimate(
@@ -865,6 +982,8 @@ def _estimate_three_grid_values(
         signed_difference,
         absolute_difference,
         relative_difference,
+        coarse_medium_approximate_relative_error,
+        coarse_medium_gci,
         approximate_relative_error,
         fine_grid_gci,
     )
@@ -964,11 +1083,139 @@ def discretization_error_estimate_to_dict(
         "relative_fine_to_extrapolated_difference": (
             estimate.relative_fine_to_extrapolated_difference
         ),
+        "coarse_medium_approximate_relative_error": (
+            estimate.coarse_medium_approximate_relative_error
+        ),
+        "coarse_medium_gci": estimate.coarse_medium_gci,
         "approximate_relative_error": estimate.approximate_relative_error,
         "fine_grid_gci": estimate.fine_grid_gci,
+        "gci_pair": {
+            "gci_32": estimate.coarse_medium_gci,
+            "gci_21": estimate.fine_grid_gci,
+        },
         "relative_values_semantics": "dimensionless_fraction",
         "asymptotic_range_assessment": "not_established_v1",
         "gci_semantics": "estimated_qoi_discretization_uncertainty_under_method_assumptions",
+    }
+
+
+def build_asymptotic_consistency_evidence(
+    estimate: DiscretizationErrorEstimate,
+    policy: AsymptoticConsistencyPolicy,
+) -> AsymptoticConsistencyEvidence:
+    """Check GCI_32 / (r**p * GCI_21) against an explicit target."""
+    if not isinstance(estimate, DiscretizationErrorEstimate):
+        raise TypeError("consistency check requires a DiscretizationErrorEstimate")
+    if not isinstance(policy, AsymptoticConsistencyPolicy):
+        raise TypeError("consistency check requires an AsymptoticConsistencyPolicy")
+
+    def not_applicable(reason_code: str) -> AsymptoticConsistencyEvidence:
+        return AsymptoticConsistencyEvidence(
+            "1",
+            estimate.source_study_id,
+            estimate.quantity_id,
+            estimate.interpretation,
+            policy,
+            "not_applicable",
+            reason_code,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+
+    if estimate.eligibility.status != "eligible":
+        return not_applicable("formal_discretization_estimate_ineligible")
+    required = (
+        estimate.coarse_medium_gci,
+        estimate.fine_grid_gci,
+        estimate.observed_order,
+        *estimate.refinement_ratios,
+    )
+    if any(value is None or not math.isfinite(value) for value in required):
+        return not_applicable("required_gci_evidence_unavailable")
+    r32, r21 = estimate.refinement_ratios
+    if r32 <= 1.0 or r21 <= 1.0 or not math.isclose(
+        r32,
+        r21,
+        rel_tol=estimate.policy.refinement_ratio_relative_tolerance,
+        abs_tol=0.0,
+    ):
+        return not_applicable("invalid_refinement_ratio")
+    refinement_ratio = (r32 + r21) / 2.0
+    try:
+        denominator = (
+            refinement_ratio**estimate.observed_order * estimate.fine_grid_gci
+        )
+    except OverflowError:
+        return not_applicable("invalid_consistency_denominator")
+    if not math.isfinite(denominator) or denominator <= policy.minimum_denominator:
+        return not_applicable("invalid_consistency_denominator")
+    consistency_ratio = estimate.coarse_medium_gci / denominator
+    if not math.isfinite(consistency_ratio):
+        return not_applicable("invalid_consistency_ratio")
+    absolute_deviation = abs(consistency_ratio - policy.target_ratio)
+    status = (
+        "consistent"
+        if absolute_deviation <= policy.allowable_absolute_deviation
+        else "outside_tolerance"
+    )
+    return AsymptoticConsistencyEvidence(
+        "1",
+        estimate.source_study_id,
+        estimate.quantity_id,
+        estimate.interpretation,
+        policy,
+        status,
+        None,
+        estimate.coarse_medium_gci,
+        estimate.fine_grid_gci,
+        refinement_ratio,
+        estimate.observed_order,
+        consistency_ratio,
+        absolute_deviation,
+    )
+
+
+def asymptotic_consistency_evidence_to_dict(
+    evidence: AsymptoticConsistencyEvidence,
+) -> dict:
+    """Serialize adjacent-GCI consistency with explicit dimensionless semantics."""
+    return {
+        "evidence_version": evidence.evidence_version,
+        "scope": evidence.scope,
+        "source_study_id": evidence.source_study_id,
+        "quantity_id": evidence.quantity_id,
+        "interpretation": evidence.interpretation,
+        "status": evidence.status,
+        "reason_code": evidence.reason_code,
+        "policy": {
+            "name": evidence.policy.policy_name,
+            "version": evidence.policy.policy_version,
+            "formula_identity": evidence.policy.formula_identity,
+            "target_ratio": evidence.policy.target_ratio,
+            "allowable_absolute_deviation": evidence.policy.allowable_absolute_deviation,
+            "minimum_denominator": evidence.policy.minimum_denominator,
+            "units": "dimensionless_fraction",
+        },
+        "gci_32": evidence.gci_32,
+        "gci_21": evidence.gci_21,
+        "refinement_ratio": evidence.refinement_ratio,
+        "observed_order": evidence.observed_order,
+        "asymptotic_consistency_ratio": evidence.consistency_ratio,
+        "absolute_deviation_from_target": evidence.absolute_deviation,
+        "formula": "GCI_32/(r^p*GCI_21)",
+        "status_semantics": {
+            "consistent": (
+                "the adjacent GCI pair satisfies only the configured numerical relation"
+            ),
+            "outside_tolerance": (
+                "the adjacent GCI relation exceeds the configured absolute deviation"
+            ),
+            "not_applicable": "the required eligible finite GCI evidence is unavailable",
+        },
     }
 
 
