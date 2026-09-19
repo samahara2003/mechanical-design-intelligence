@@ -100,6 +100,11 @@ from numerical_results import IntegrationPointStress, NumericalResult, Vector3
 from run_bracket_solve import resolve_mesh_elements
 from run_cantilever_solve import as_calculix_c3d10, read_msh
 from surface_load_mapping import map_uniform_force_to_c3d10_faces, triangle_area
+from stress_spatial_profile import (
+    StressPathDefinition,
+    StressSpatialProfile,
+    evaluate_stress_spatial_profile,
+)
 
 
 LEVELS = (
@@ -280,6 +285,7 @@ def analyze_level(
     *,
     root_local_size_m: float | None = None,
     feature_stress_region: PhysicalCoordinateBoxRegion | None = None,
+    stress_path: StressPathDefinition | None = None,
 ) -> tuple[
     dict,
     QuantityEvaluation,
@@ -287,6 +293,7 @@ def analyze_level(
     RegionalStressEvidence,
     tuple[SpatialStressBandEvidence, ...],
     RegionalStressEvidence | None,
+    StressSpatialProfile | None,
 ]:
     scripts = repository / "scripts"
     output_dir = root / name
@@ -404,6 +411,20 @@ def analyze_level(
             mesh=result.mesh,
         )
     )
+    if stress_path is not None and feature_stress is None:
+        raise BracketVerificationError(
+            "Stress-path evaluation requires feature-region stress evidence"
+        )
+    stress_profile = (
+        None
+        if stress_path is None
+        else evaluate_stress_spatial_profile(
+            stress_path,
+            located_numerical,
+            mesh_identity=f"sha256:{provenance.mesh.sha256}",
+            feature_peak_location_m=feature_stress.maximum_location_m,
+        )
+    )
     if not math.isclose(quantity_evaluation.value, qoi[0], rel_tol=0.0, abs_tol=1e-15):
         raise BracketVerificationError(
             "reusable QoI evaluation differs from existing integration"
@@ -447,6 +468,7 @@ def analyze_level(
         regional_stress,
         spatial_band_evidence,
         feature_stress,
+        stress_profile,
     )
 
 

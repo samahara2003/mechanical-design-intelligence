@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import sys
 import time
 from pathlib import Path
@@ -31,6 +32,14 @@ from generate_bracket_mesh import (
     UPRIGHT_X_MIN_M,
 )
 from numerical_results import Vector3
+from stress_spatial_profile import (
+    StressPathDefinition,
+    StressProfileComparisonPolicy,
+    assess_stress_profile_impact,
+    build_stress_spatial_profile_study,
+    stress_profile_assessment_impact_to_dict,
+    stress_spatial_profile_study_to_dict,
+)
 
 
 FAR_FIELD_SIZE_M = 0.006
@@ -69,6 +78,71 @@ BEHAVIOR_POLICY = FeatureStressBehaviorPolicy(
     stable_relative_mean_change=0.05,
     sensitive_relative_maximum_change=0.10,
 )
+
+ROOT_BASE_TANGENCY_PROFILE = StressPathDefinition(
+    path_id="root_fillet_base_tangency_inward_profile",
+    path_version="1",
+    reference_feature="root_fillet_base_tangency_line",
+    origin_m=Vector3(UPRIGHT_X_MIN_M - ROOT_FILLET_RADIUS_M, 0.0, 0.012),
+    direction=Vector3(-1.0, 0.0, 0.0),
+    extent_m=0.012,
+    transverse_z_half_width_m=0.002,
+    y_interval_m=(0.0, BASE_WIDTH_M),
+    bin_edges_m=(0.0, 0.003, 0.006, 0.009, 0.012),
+    physical_rationale=(
+        "Profiles stress inward through the base from the CAD line where the 15 mm "
+        "circular fillet is tangent to the base top; the full width is retained."
+    ),
+)
+
+ROOT_PROFILE_POLICY = StressProfileComparisonPolicy(
+    policy_name="controlled_bracket_root_base_tangency_profile",
+    policy_version="1",
+    normalized_mean_absolute_tolerance=0.10,
+    high_stress_fraction_of_profile_maximum=0.80,
+    high_zone_width_change_tolerance_m=0.0015,
+)
+
+
+def root_maximum_geometry_relationship(location_m: Vector3) -> dict:
+    """Relate a located maximum to the exact quarter-circle CAD construction."""
+    circle_center_x = UPRIGHT_X_MIN_M
+    circle_center_z = 0.012
+    tangency_x = UPRIGHT_X_MIN_M - ROOT_FILLET_RADIUS_M
+    tangency_z = 0.012
+    radial_distance = math.hypot(
+        location_m.x - circle_center_x, location_m.z - circle_center_z
+    )
+    base_side = location_m.x < tangency_x and location_m.z < tangency_z
+    return {
+        "location_m": list(location_m.as_tuple()),
+        "cad_fillet_cross_section": {
+            "circle_center_xz_m": [circle_center_x, circle_center_z],
+            "radius_m": ROOT_FILLET_RADIUS_M,
+            "arc_quadrant": "x<=center_x_and_z>=center_z",
+            "base_tangency_line_xz_m": [tangency_x, tangency_z],
+            "line_extent_y_m": [0.0, BASE_WIDTH_M],
+        },
+        "inside_base_material": (
+            0.0 <= location_m.x <= 0.140
+            and 0.0 <= location_m.y <= BASE_WIDTH_M
+            and 0.0 <= location_m.z <= 0.012
+        ),
+        "inside_fillet_quarter_projection": (
+            tangency_x <= location_m.x <= circle_center_x
+            and circle_center_z <= location_m.z <= circle_center_z + ROOT_FILLET_RADIUS_M
+            and radial_distance <= ROOT_FILLET_RADIUS_M
+        ),
+        "base_side_of_fillet_tangency": base_side,
+        "distance_to_base_tangency_line_m": math.hypot(
+            location_m.x - tangency_x, location_m.z - tangency_z
+        ),
+        "radial_offset_from_full_circle_m": radial_distance - ROOT_FILLET_RADIUS_M,
+        "closest_permitted_fillet_boundary_feature": (
+            "base_side_tangency_line" if base_side else "not_classified_by_v1"
+        ),
+        "semantics": "geometric relationship only; no causal or singularity claim",
+    }
 
 
 def refinement_definition(level_id: str, local_size_m: float) -> LocalMeshRefinementDefinition:
@@ -115,6 +189,7 @@ def main() -> int:
                 step_path,
                 root_local_size_m=local_size,
                 feature_stress_region=ROOT_FEATURE_REGION,
+                stress_path=ROOT_BASE_TANGENCY_PROFILE,
             )
             for level_id, local_size in LOCAL_LEVELS
         )
@@ -140,8 +215,18 @@ def main() -> int:
             LOCALIZATION_POLICY,
             BEHAVIOR_POLICY,
         )
+        profiles = tuple(item[6] for item in executions)
+        if any(item is None for item in profiles):
+            raise BracketVerificationError("Root stress profile evidence is missing")
+        profile_study = build_stress_spatial_profile_study(
+            "controlled_bracket_root_base_tangency_profile",
+            "1",
+            profiles,
+            ROOT_PROFILE_POLICY,
+        )
         blockers = _load_current_blockers(bracket_root / "bracket_validation.json")
         impact = assess_critical_stress_impact(study, blockers)
+        profile_impact = assess_stress_profile_impact(profile_study, blockers)
         artifact = {
             "status": "controlled root-feature local refinement completed",
             "case_id": "mounting-bracket-root-local-refinement-v1",
@@ -151,9 +236,21 @@ def main() -> int:
                 "upright_x_min_m": UPRIGHT_X_MIN_M,
                 "root_fillet_radius_m": ROOT_FILLET_RADIUS_M,
                 "same_step_geometry_as_global_study": True,
+                "feature_maximum_relationships": [
+                    root_maximum_geometry_relationship(
+                        item.evidence.maximum_location_m
+                    )
+                    for item in levels
+                ],
             },
             "feature_stress_refinement_study": feature_stress_refinement_study_to_dict(study),
+            "stress_spatial_profile_study": stress_spatial_profile_study_to_dict(
+                profile_study
+            ),
             "critical_stress_assessment_impact": critical_stress_impact_to_dict(impact),
+            "stress_profile_assessment_impact": (
+                stress_profile_assessment_impact_to_dict(profile_impact)
+            ),
             "execution_records": [item[0] for item in executions],
             "runtime_seconds": time.perf_counter() - started,
         }

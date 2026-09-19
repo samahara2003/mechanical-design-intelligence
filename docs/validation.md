@@ -447,6 +447,23 @@ The mean changes by `-0.365196 MPa` (`1.917473%`) and `+0.020090 MPa` (`0.107544
 
 Formal Richardson/GCI evidence is `ineligible`: the existing contract requires three decreasing global characteristic sizes, whereas this experiment fixes the far field and changes a nonuniform local field target. The local study therefore resolves none of the current critical-stress blockers. It adds more specific evidence codes for root-feature local refinement, a mesh-sensitive feature maximum, and lack of full-sequence spatial localization; `feature_specific_extraction_not_defined`, the prior global/regional blockers, and the mounting-constraint limitation remain. Status stays `not_established`, with no numeric design stress, yield, FoS, singularity, or structural decision.
 
+CAD construction confirms that the fillet is the upper-left quarter of the circle centered at `(x,z)=(0.128,0.012) m` with radius `0.015 m`, extruded across Y. Its base-side tangency line is `(x,z)=(0.113,0.012) m`, `y=[0,0.100] m`. All three recorded feature maxima have `x<0.113 m` and `z<0.012 m`: they are located inside base material, outside the quarter-fillet projection, and closest to that permitted arc endpoint/tangency line. Their XZ distances to the line are `1.245307`, `0.993042`, and `0.568250 mm`; this is geometric association only.
+
+Profile `root_fillet_base_tangency_inward_profile/1` therefore samples global `-X` from that tangency line through the base over `0-12 mm`, across the full Y width, with explicit `|z-0.012| <= 2 mm`. No stress is interpolated. Four 3 mm bins preserve all located raw integration-point samples:
+
+| Distance inward | Reference count / mean / max | Medium count / mean / max | Fine count / mean / max |
+| --- | ---: | ---: | ---: |
+| `0-3 mm` | `95 / 70.2877 / 95.7094 MPa` | `220 / 75.0579 / 112.6906 MPa` | `707 / 75.8577 / 135.7647 MPa` |
+| `3-6 mm` | `120 / 67.5263 / 81.7293 MPa` | `194 / 68.9396 / 87.3204 MPa` | `575 / 71.1468 / 86.5852 MPa` |
+| `6-9 mm` | `89 / 66.9095 / 74.7161 MPa` | `171 / 68.3583 / 77.4284 MPa` | `377 / 70.6310 / 79.3278 MPa` |
+| `9-12 mm` | `98 / 68.0526 / 76.5257 MPa` | `118 / 68.7818 / 74.5787 MPa` | `178 / 68.8674 / 77.2395 MPa` |
+
+Every existing feature maximum is associated with the first `0-3 mm` bin. Its inward/transverse distances are respectively `(0.926113,0.832530)`, `(0.819772,0.560453)`, and `(0.444067,0.354561) mm`. Thus the growing maxima remain tied to the same base-side portion of the profile and approach the tangency line under refinement; this does not establish cause or a singularity.
+
+Adjacent-bin descriptive mean gradients, reported as `MPa/mm`, are Reference `(-0.92050,-0.20559,+0.38104)`, Medium `(-2.03943,-0.19375,+0.14115)`, and Fine `(-1.57030,-0.17194,-0.58787)`. They are finite differences of bin means only. Normalized mean-profile maximum differences are `0.009304` and `0.004283`, within the controlled `0.10` profile-shape tolerance, so mean shape is `reproducible_within_policy`. The field is generally highest in the first bin, while farther-bin means remain near `67-71 MPa`; the first-bin maximum nevertheless continues to increase materially.
+
+Using the policy's explicit high-zone definition (bin maximum at least 80% of that mesh's profile maximum), width changes from `6 mm` on Reference to `3 mm` on Medium and Fine, classified `narrowed` with a `1.5 mm` width-change tolerance. This thresholded spatial diagnostic does not prove convergence. The profile improves localization and creates the specific next requirement `explicit_profile_to_stress_extraction_methodology`, but resolves no `CriticalStressAssessment` blocker. Status remains `not_established` and no design stress is emitted.
+
 The ignored `artifacts/bracket/bracket_validation.json` record contains all three definitions, reusable results, exact artifact checksums, tool versions, load and moment equilibrium, mesh quality, selected QoI, adjacent comparisons, feature classification, and limitations. The same STEP bytes feed all mesh levels. Current geometry selection remains dimension-based named-region recovery after STEP import; the case does not establish persistent CAD-face identity.
 
 ### Engineering Worker V0 end-to-end verification
