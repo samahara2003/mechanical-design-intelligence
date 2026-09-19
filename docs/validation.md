@@ -412,6 +412,23 @@ From coarse to baseline, the mean changes by `+0.549721978 MPa` (`2.281814983%`)
 
 The regional maxima remain below the separate global raw peaks of `143.417307`, `145.277077`, and `164.411765 MPa`, which remain `diagnostic_only` and located in the mounting-hole vicinity. Regional evidence neither replaces those peaks nor selects a stress for FoS, yielding, failure, or structural acceptance. Coordinate-box membership is specific to this controlled geometry and is not persistent CAD topology naming or a universal support-distance rule.
 
+The regional maximum locations are `(0.139129746, 0.002007651, 0.033876160) m`, `(0.128802151, 0.047845575, 0.031543706) m`, and `(0.128546231, 0.045045733, 0.030228061) m` for coarse, baseline, and fine. Their exact distances to the nearest finite cylindrical fixed surface are `0.102988170`, `0.092629321`, and `0.091503837 m`, all beyond the controlled `0.015 m` near-feature threshold. They lie respectively `0.006876160`, `0.004543706`, and `0.003228061 m` above the root-fillet top Z coordinate and remain inside the declared lower-upright region. These coordinate relationships establish proximity and membership only, not the mechanism producing the stress.
+
+The coarse-to-baseline maximum-location distance is `0.047044817 m`, exceeding the controlled `0.020 m` material-movement threshold. Baseline-to-fine distance is `0.003104115 m`, within the `0.010 m` localization threshold. The three-mesh diagnostic therefore reports `materially_moved_with_refinement`: the maxima retain broad lower-upright membership but do not remain localized to one subarea over the complete sequence. Maxima on different meshes are not identified as the same physical point.
+
+Four non-overlapping global-X coordinate bands provide the smallest controlled support-to-upright spatial diagnostic. Their boundaries are support-side base `[0,0.070) m`, base transfer `[0.070,0.113) m`, root transition `[0.113,0.128) m`, and upright/load path `[0.128,0.155] m`. These are global-X proxies aligned with known geometry, not exact shortest distances or a Saint-Venant rule. All raw located samples are retained:
+
+| Band | Coarse count / mean / max | Baseline count / mean / max | Fine count / mean / max |
+| --- | ---: | ---: | ---: |
+| Support-side base | `6,292 / 29.1753 / 143.4173 MPa` | `10,355 / 27.0302 / 145.2771 MPa` | `30,728 / 26.1261 / 164.4118 MPa` |
+| Base transfer | `2,092 / 44.3437 / 77.4249 MPa` | `5,971 / 44.5708 / 94.1378 MPa` | `18,403 / 43.3783 / 120.8411 MPa` |
+| Root transition | `1,295 / 19.5492 / 57.3941 MPa` | `3,521 / 21.1012 / 67.3807 MPa` | `10,980 / 20.8866 / 85.3405 MPa` |
+| Upright/load path | `6,757 / 10.9750 / 49.4751 MPa` | `18,461 / 11.8776 / 68.6614 MPa` | `55,281 / 12.0010 / 81.8700 MPa` |
+
+Under policy `controlled_bracket_stress_spatial_diagnostic/1`, the base-transfer mean is `comparatively_stable` because both adjacent relative changes (`0.5123%`, `2.6756%`) stay within `5%`. The support-side (`7.3524%`, `3.3447%`), root-transition (`7.9390%`, `1.0170%`), and upright/load-path (`8.2247%`, `1.0386%`) means are labeled `mesh_sensitive` because at least one adjacent change exceeds that case-specific limit. Every band maximum is `mesh_sensitive` because at least one adjacent increase exceeds `10%`; no Richardson/GCI estimate is applied to these band sequences.
+
+The support-side maxima coincide with the preserved global raw peaks near the fixed bores. Root-transition and upright/load-path maxima also increase, while their locations and band means provide separate spatial context. This supports geometric association with multiple known areas and confirms continuing local mesh sensitivity. It does not establish a singularity, causal attribution to the fixed boundary, a physically validated stress concentration, yielding, FoS, or structural acceptance.
+
 The ignored `artifacts/bracket/bracket_validation.json` record contains all three definitions, reusable results, exact artifact checksums, tool versions, load and moment equilibrium, mesh quality, selected QoI, adjacent comparisons, feature classification, and limitations. The same STEP bytes feed all mesh levels. Current geometry selection remains dimension-based named-region recovery after STEP import; the case does not establish persistent CAD-face identity.
 
 ### Engineering Worker V0 end-to-end verification

@@ -33,6 +33,8 @@ from bracket_quantities import (
     BRACKET_DISCRETIZATION_ESTIMATE_POLICY,
     BRACKET_MESH_STUDY_ID,
     BRACKET_MESH_STUDY_VERSION,
+    BRACKET_STRESS_SPATIAL_BANDS,
+    BRACKET_STRESS_SPATIAL_POLICY,
     LOAD_PAD_AVERAGE_UX,
     LOAD_PAD_UX_REFINEMENT_POLICY,
     LOWER_UPRIGHT_WEB_STRESS_REGION,
@@ -57,11 +59,19 @@ from engineering_quantities import (
     raw_stress_mesh_trend_to_dict,
 )
 from engineering_stress import (
+    FeatureRelationshipEvidence,
+    LocatedStressFeatureEvidence,
     RegionalStressEvidence,
+    SpatialStressBandEvidence,
     build_regional_stress_mesh_study,
+    build_spatial_stress_band_studies,
+    build_stress_spatial_diagnostic,
     evaluate_regional_stress,
+    evaluate_spatial_stress_bands,
     regional_stress_evidence_to_dict,
     regional_stress_mesh_study_to_dict,
+    spatial_stress_band_study_to_dict,
+    stress_spatial_diagnostic_to_dict,
 )
 from generate_bracket_mesh import (
     BASE_LENGTH_M,
@@ -193,9 +203,76 @@ def classify_stress_location(location: tuple[float, float, float]) -> str:
     return "bracket body away from predeclared feature vicinities"
 
 
+def fixed_bore_surface_distance_m(location: Vector3) -> float:
+    """Exact distance to the finite cylindrical surfaces used by the fixed BC."""
+    axial_excess = max(0.0, location.z - BASE_THICKNESS_M, -location.z)
+    return min(
+        math.hypot(
+            abs(math.hypot(location.x - cx, location.y - cy) - MOUNTING_HOLE_RADIUS_M),
+            axial_excess,
+        )
+        for cx, cy in MOUNTING_HOLE_CENTRES_M
+    )
+
+
+def regional_maximum_feature_evidence(
+    evidence: RegionalStressEvidence,
+) -> LocatedStressFeatureEvidence:
+    location = evidence.maximum_location_m
+    fixed_distance = fixed_bore_surface_distance_m(location)
+    fixed_relationship = (
+        "within_controlled_near_distance"
+        if fixed_distance <= BRACKET_STRESS_SPATIAL_POLICY.near_feature_distance_m
+        else "separated_beyond_controlled_near_distance"
+    )
+    fillet_top_z = BASE_THICKNESS_M + ROOT_FILLET_RADIUS_M
+    return LocatedStressFeatureEvidence(
+        evidence.mesh_identity,
+        evidence.mesh.characteristic_size_m,
+        evidence.maximum_von_mises_pa,
+        location,
+        (
+            FeatureRelationshipEvidence(
+                "simplified_fixed_mounting_bores",
+                fixed_relationship,
+                "exact_distance_to_finite_cylindrical_fixed_surface",
+                fixed_distance,
+                "minimum Euclidean distance to either finite mounting-hole cylinder",
+            ),
+            FeatureRelationshipEvidence(
+                "root_fillet",
+                "above_fillet_top_coordinate",
+                "vertical_coordinate_gap_above_fillet_top",
+                location.z - fillet_top_z,
+                "global-Z coordinate difference; not a shortest-distance calculation",
+            ),
+            FeatureRelationshipEvidence(
+                "upright_web",
+                "inside_declared_lower_upright_web_region",
+                None,
+                None,
+                "closed coordinate-box membership",
+            ),
+            FeatureRelationshipEvidence(
+                "load_pad",
+                "below_load_pad_bottom_coordinate",
+                "vertical_coordinate_gap_below_load_pad_bottom",
+                LOAD_PAD_Z_MIN_M - location.z,
+                "global-Z coordinate difference; not a shortest-distance calculation",
+            ),
+        ),
+    )
+
+
 def analyze_level(
     repository: Path, root: Path, name: str, mesh_size: float, step_path: Path
-) -> tuple[dict, QuantityEvaluation, AnalysisResult, RegionalStressEvidence]:
+) -> tuple[
+    dict,
+    QuantityEvaluation,
+    AnalysisResult,
+    RegionalStressEvidence,
+    tuple[SpatialStressBandEvidence, ...],
+]:
     scripts = repository / "scripts"
     output_dir = root / name
     mesh, mesh_runtime = run_json(
@@ -287,6 +364,12 @@ def analyze_level(
         mesh_identity=f"sha256:{provenance.mesh.sha256}",
         mesh=result.mesh,
     )
+    spatial_band_evidence = evaluate_spatial_stress_bands(
+        BRACKET_STRESS_SPATIAL_BANDS,
+        located_numerical,
+        mesh_identity=f"sha256:{provenance.mesh.sha256}",
+        mesh=result.mesh,
+    )
     if not math.isclose(quantity_evaluation.value, qoi[0], rel_tol=0.0, abs_tol=1e-15):
         raise BracketVerificationError(
             "reusable QoI evaluation differs from existing integration"
@@ -322,7 +405,7 @@ def analyze_level(
         "fixed_node_maximum_displacement_m": solve["sanity"]["maximum_fixed_node_displacement_m"],
         "runtimes_seconds": {"mesh": mesh_runtime, "solve": solve_runtime},
     }
-    return record, quantity_evaluation, result, regional_stress
+    return record, quantity_evaluation, result, regional_stress, spatial_band_evidence
 
 
 def main() -> int:
@@ -340,6 +423,7 @@ def main() -> int:
         evaluations = [item[1] for item in analyzed]
         results = [item[2] for item in analyzed]
         regional_stress_evaluations = [item[3] for item in analyzed]
+        spatial_band_evaluations = [item[4] for item in analyzed]
         mesh_study = build_mesh_convergence_study(
             BRACKET_MESH_STUDY_ID,
             BRACKET_MESH_STUDY_VERSION,
@@ -350,6 +434,17 @@ def main() -> int:
         raw_stress_study = build_raw_stress_mesh_trend(results, evaluations)
         regional_stress_study = build_regional_stress_mesh_study(
             regional_stress_evaluations
+        )
+        spatial_band_studies = build_spatial_stress_band_studies(
+            spatial_band_evaluations
+        )
+        stress_spatial_diagnostic = build_stress_spatial_diagnostic(
+            tuple(
+                regional_maximum_feature_evidence(item)
+                for item in regional_stress_evaluations
+            ),
+            spatial_band_studies,
+            BRACKET_STRESS_SPATIAL_POLICY,
         )
         displacement_error_estimate = estimate_mesh_discretization_error(
             mesh_study, BRACKET_DISCRETIZATION_ESTIMATE_POLICY
@@ -419,6 +514,13 @@ def main() -> int:
             ),
             "regional_stress_mesh_study": regional_stress_mesh_study_to_dict(
                 regional_stress_study
+            ),
+            "spatial_stress_band_studies": [
+                spatial_stress_band_study_to_dict(item)
+                for item in spatial_band_studies
+            ],
+            "stress_spatial_diagnostic": stress_spatial_diagnostic_to_dict(
+                stress_spatial_diagnostic
             ),
             "raw_stress_discretization_eligibility": (
                 discretization_error_estimate_to_dict(raw_stress_error_eligibility)

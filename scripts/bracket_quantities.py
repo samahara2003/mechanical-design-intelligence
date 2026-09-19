@@ -3,7 +3,11 @@
 import math
 
 from bracket_definition import BRACKET_LOAD_FACE
-from engineering_stress import PhysicalCoordinateBoxRegion
+from engineering_stress import (
+    PhysicalCoordinateBoxRegion,
+    SpatialStressBand,
+    StressSpatialDiagnosticPolicy,
+)
 from engineering_quantities import (
     AsymptoticConsistencyPolicy,
     DiscretizationErrorEstimatePolicy,
@@ -17,8 +21,10 @@ from generate_bracket_mesh import (
     BASE_LENGTH_M,
     BASE_THICKNESS_M,
     BASE_WIDTH_M,
+    LOAD_PAD_X_MAX_M,
     MOUNTING_HOLE_CENTRES_M,
     MOUNTING_HOLE_RADIUS_M,
+    ROOT_FILLET_RADIUS_M,
     UPRIGHT_X_MIN_M,
 )
 from numerical_results import Vector3
@@ -78,4 +84,53 @@ LOWER_UPRIGHT_WEB_STRESS_REGION = PhysicalCoordinateBoxRegion(
         - (MOUNTING_HOLE_CENTRES_M[0][0] + MOUNTING_HOLE_RADIUS_M),
         0.030 - BASE_THICKNESS_M,
     ),
+)
+
+BRACKET_STRESS_SPATIAL_BANDS = (
+    SpatialStressBand(
+        "support_side_base",
+        "1",
+        "Support-side base",
+        0.0,
+        0.070,
+        False,
+        "base volume containing both simplified fixed mounting-hole bores",
+    ),
+    SpatialStressBand(
+        "base_transfer",
+        "1",
+        "Base transfer span",
+        0.070,
+        UPRIGHT_X_MIN_M - ROOT_FILLET_RADIUS_M,
+        False,
+        "base span between the support-side band and root-fillet X projection",
+    ),
+    SpatialStressBand(
+        "root_transition",
+        "1",
+        "Root-fillet X projection",
+        UPRIGHT_X_MIN_M - ROOT_FILLET_RADIUS_M,
+        UPRIGHT_X_MIN_M,
+        False,
+        "global-X projection occupied by the 15 mm root transition",
+    ),
+    SpatialStressBand(
+        "upright_load_path",
+        "1",
+        "Upright and load-pad span",
+        UPRIGHT_X_MIN_M,
+        LOAD_PAD_X_MAX_M,
+        True,
+        "upright web and protruding load-pad global-X span",
+    ),
+)
+
+BRACKET_STRESS_SPATIAL_POLICY = StressSpatialDiagnosticPolicy(
+    policy_name="controlled_bracket_stress_spatial_diagnostic",
+    policy_version="1",
+    near_feature_distance_m=0.015,
+    localized_maximum_distance_m=0.010,
+    material_movement_distance_m=0.020,
+    stable_relative_mean_change=0.05,
+    sensitive_relative_maximum_change=0.10,
 )
