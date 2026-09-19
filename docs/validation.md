@@ -398,6 +398,20 @@ Applying the same formal-estimate eligibility gate to that raw-stress sequence r
 
 Because the raw-stress estimate is ineligible, its asymptotic-consistency record is `not_applicable`, preserves `diagnostic_only`, and contains null `GCI_32`, `GCI_21`, ratio, and observed-order fields. It adds no FoS, failure, singularity, design-critical interpretation, or structural acceptance.
 
+The first regional stress evidence uses the predeclared lower-upright-web box `x=[0.128,0.140] m`, `y=[0,0.100] m`, `z=[0.030,0.060] m`. This volume covers the upright load path above the `0.015 m` root fillet and below the load pad. It does not touch either constrained hole bore: the closest possible box-to-bore-surface distance from the declared geometry is approximately `0.0888425574 m`. That separation makes the region useful for contrasting distributed upright stress with the fixed-bore global peaks, but it does not remove the influence of the support idealization or establish physical correctness.
+
+All located raw integration points within the closed box are retained. Von Mises stress is derived from each six-component global Cauchy tensor, and the resulting descriptive evidence is:
+
+| Mesh | Samples | Minimum | Arithmetic mean | Maximum |
+| --- | ---: | ---: | ---: | ---: |
+| Coarse, `0.009 m` | `1,361` | `3.232432 MPa` | `24.091435 MPa` | `49.475131 MPa` |
+| Baseline, `0.006 m` | `4,022` | `1.285323 MPa` | `24.641157 MPa` | `56.336382 MPa` |
+| Fine, `0.004 m` | `12,387` | `0.936871 MPa` | `23.942205 MPa` | `64.730260 MPa` |
+
+From coarse to baseline, the mean changes by `+0.549721978 MPa` (`2.281814983%`) and the maximum by `+6.861251676 MPa` (`13.868081946%`). From baseline to fine, the mean changes by `-0.698952057 MPa` (`2.836522862%` in magnitude) and the maximum by `+8.393878043 MPa` (`14.899568770%`). Thus the regional mean stays near `24 MPa` while the regional maximum increases over this tested sequence. These are observed mesh changes only; no formal convergence or acceptance status is assigned.
+
+The regional maxima remain below the separate global raw peaks of `143.417307`, `145.277077`, and `164.411765 MPa`, which remain `diagnostic_only` and located in the mounting-hole vicinity. Regional evidence neither replaces those peaks nor selects a stress for FoS, yielding, failure, or structural acceptance. Coordinate-box membership is specific to this controlled geometry and is not persistent CAD topology naming or a universal support-distance rule.
+
 The ignored `artifacts/bracket/bracket_validation.json` record contains all three definitions, reusable results, exact artifact checksums, tool versions, load and moment equilibrium, mesh quality, selected QoI, adjacent comparisons, feature classification, and limitations. The same STEP bytes feed all mesh levels. Current geometry selection remains dimension-based named-region recovery after STEP import; the case does not establish persistent CAD-face identity.
 
 ### Engineering Worker V0 end-to-end verification

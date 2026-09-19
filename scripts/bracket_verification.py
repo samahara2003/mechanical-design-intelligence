@@ -35,6 +35,7 @@ from bracket_quantities import (
     BRACKET_MESH_STUDY_VERSION,
     LOAD_PAD_AVERAGE_UX,
     LOAD_PAD_UX_REFINEMENT_POLICY,
+    LOWER_UPRIGHT_WEB_STRESS_REGION,
 )
 from calculix_results import CalculixResultParseError, parse_calculix_dat
 from engineering_assessment import engineering_assessment_to_dict
@@ -55,6 +56,13 @@ from engineering_quantities import (
     raw_stress_diagnostic_to_dict,
     raw_stress_mesh_trend_to_dict,
 )
+from engineering_stress import (
+    RegionalStressEvidence,
+    build_regional_stress_mesh_study,
+    evaluate_regional_stress,
+    regional_stress_evidence_to_dict,
+    regional_stress_mesh_study_to_dict,
+)
 from generate_bracket_mesh import (
     BASE_LENGTH_M,
     BASE_THICKNESS_M,
@@ -71,7 +79,7 @@ from generate_bracket_mesh import (
     UPRIGHT_HEIGHT_M,
     UPRIGHT_X_MIN_M,
 )
-from numerical_results import Vector3
+from numerical_results import IntegrationPointStress, NumericalResult, Vector3
 from run_bracket_solve import resolve_mesh_elements
 from run_cantilever_solve import as_calculix_c3d10, read_msh
 from surface_load_mapping import map_uniform_force_to_c3d10_faces, triangle_area
@@ -187,7 +195,7 @@ def classify_stress_location(location: tuple[float, float, float]) -> str:
 
 def analyze_level(
     repository: Path, root: Path, name: str, mesh_size: float, step_path: Path
-) -> tuple[dict, QuantityEvaluation, AnalysisResult]:
+) -> tuple[dict, QuantityEvaluation, AnalysisResult, RegionalStressEvidence]:
     scripts = repository / "scripts"
     output_dir = root / name
     mesh, mesh_runtime = run_json(
@@ -227,10 +235,24 @@ def analyze_level(
                 element["nodes"], nodes, GAUSS_NATURAL_COORDINATES[stress.integration_point-1]
             )
         )
+    located_numerical = NumericalResult(
+        numerical.displacements,
+        numerical.reactions,
+        tuple(
+            IntegrationPointStress(
+                stress.element_id,
+                stress.integration_point,
+                stress.stress_pa,
+                ip_locations[(stress.element_id, stress.integration_point)],
+            )
+            for stress in numerical.integration_point_stresses
+        ),
+        numerical.reaction_resultant_n,
+    )
     definition = bracket_analysis_definition(mesh["gmsh_version"], solve["ccx_version"], mesh_size)
     result = build_analysis_result(
         definition,
-        numerical,
+        located_numerical,
         ResolvedAnalysisContext(
             mesh["mesh"]["node_count"],
             mesh["mesh"]["volume_element_count"],
@@ -259,6 +281,12 @@ def analyze_level(
         faces=load_faces,
         node_coordinates_m=nodes,
     )
+    regional_stress = evaluate_regional_stress(
+        LOWER_UPRIGHT_WEB_STRESS_REGION,
+        located_numerical,
+        mesh_identity=f"sha256:{provenance.mesh.sha256}",
+        mesh=result.mesh,
+    )
     if not math.isclose(quantity_evaluation.value, qoi[0], rel_tol=0.0, abs_tol=1e-15):
         raise BracketVerificationError(
             "reusable QoI evaluation differs from existing integration"
@@ -273,6 +301,7 @@ def analyze_level(
             build_bracket_assessment(result)
         ),
         "quantity_evaluation": quantity_evaluation_to_dict(quantity_evaluation),
+        "regional_stress_evidence": regional_stress_evidence_to_dict(regional_stress),
         "analysis_provenance": analysis_provenance_to_dict(provenance),
         "mesh_quality": mesh["quality"],
         "gmsh_warnings": mesh["gmsh_warnings"],
@@ -293,7 +322,7 @@ def analyze_level(
         "fixed_node_maximum_displacement_m": solve["sanity"]["maximum_fixed_node_displacement_m"],
         "runtimes_seconds": {"mesh": mesh_runtime, "solve": solve_runtime},
     }
-    return record, quantity_evaluation, result
+    return record, quantity_evaluation, result, regional_stress
 
 
 def main() -> int:
@@ -310,6 +339,7 @@ def main() -> int:
         levels = [item[0] for item in analyzed]
         evaluations = [item[1] for item in analyzed]
         results = [item[2] for item in analyzed]
+        regional_stress_evaluations = [item[3] for item in analyzed]
         mesh_study = build_mesh_convergence_study(
             BRACKET_MESH_STUDY_ID,
             BRACKET_MESH_STUDY_VERSION,
@@ -318,6 +348,9 @@ def main() -> int:
         )
         refinement = mesh_study.adjacent_comparisons[1]
         raw_stress_study = build_raw_stress_mesh_trend(results, evaluations)
+        regional_stress_study = build_regional_stress_mesh_study(
+            regional_stress_evaluations
+        )
         displacement_error_estimate = estimate_mesh_discretization_error(
             mesh_study, BRACKET_DISCRETIZATION_ESTIMATE_POLICY
         )
@@ -383,6 +416,9 @@ def main() -> int:
             ),
             "raw_stress_mesh_trend": raw_stress_mesh_trend_to_dict(
                 raw_stress_study
+            ),
+            "regional_stress_mesh_study": regional_stress_mesh_study_to_dict(
+                regional_stress_study
             ),
             "raw_stress_discretization_eligibility": (
                 discretization_error_estimate_to_dict(raw_stress_error_eligibility)
