@@ -3,6 +3,10 @@
 import math
 
 from bracket_definition import BRACKET_LOAD_FACE
+from critical_stress_assessment import (
+    CriticalStressAssessmentPolicy,
+    ModelAssumptionLimitation,
+)
 from engineering_stress import (
     PhysicalCoordinateBoxRegion,
     SpatialStressBand,
@@ -133,4 +137,26 @@ BRACKET_STRESS_SPATIAL_POLICY = StressSpatialDiagnosticPolicy(
     material_movement_distance_m=0.020,
     stable_relative_mean_change=0.05,
     sensitive_relative_maximum_change=0.10,
+)
+
+BRACKET_CRITICAL_STRESS_POLICY = CriticalStressAssessmentPolicy(
+    policy_name="controlled_bracket_critical_stress_establishment",
+    policy_version="1",
+    regional_evidence_region_id=LOWER_UPRIGHT_WEB_STRESS_REGION.region_id,
+    regional_evidence_region_version=LOWER_UPRIGHT_WEB_STRESS_REGION.region_version,
+    regional_containing_band_id="upright_load_path",
+    required_maximum_mesh_behavior="comparatively_stable",
+    required_maximum_location_behavior="spatially_localized_within_policy",
+    required_local_peak_treatment="explicitly_retained_and_justified",
+)
+
+BRACKET_CRITICAL_STRESS_MODEL_ASSUMPTIONS = (
+    ModelAssumptionLimitation(
+        code="fully_fixed_mounting_holes",
+        description=(
+            "The fully fixed mounting-bores idealization has not been adequately "
+            "characterized for design-stress selection."
+        ),
+        status="unresolved",
+    ),
 )

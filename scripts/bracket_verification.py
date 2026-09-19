@@ -29,6 +29,8 @@ from bracket_definition import (
     bracket_analysis_definition,
 )
 from bracket_quantities import (
+    BRACKET_CRITICAL_STRESS_MODEL_ASSUMPTIONS,
+    BRACKET_CRITICAL_STRESS_POLICY,
     BRACKET_ASYMPTOTIC_CONSISTENCY_POLICY,
     BRACKET_DISCRETIZATION_ESTIMATE_POLICY,
     BRACKET_MESH_STUDY_ID,
@@ -38,6 +40,10 @@ from bracket_quantities import (
     LOAD_PAD_AVERAGE_UX,
     LOAD_PAD_UX_REFINEMENT_POLICY,
     LOWER_UPRIGHT_WEB_STRESS_REGION,
+)
+from critical_stress_assessment import (
+    build_critical_stress_assessment,
+    critical_stress_assessment_to_dict,
 )
 from calculix_results import CalculixResultParseError, parse_calculix_dat
 from engineering_assessment import engineering_assessment_to_dict
@@ -446,6 +452,14 @@ def main() -> int:
             spatial_band_studies,
             BRACKET_STRESS_SPATIAL_POLICY,
         )
+        critical_stress_assessment = build_critical_stress_assessment(
+            raw_stress_study,
+            regional_stress_study,
+            spatial_band_studies,
+            stress_spatial_diagnostic,
+            BRACKET_CRITICAL_STRESS_POLICY,
+            BRACKET_CRITICAL_STRESS_MODEL_ASSUMPTIONS,
+        )
         displacement_error_estimate = estimate_mesh_discretization_error(
             mesh_study, BRACKET_DISCRETIZATION_ESTIMATE_POLICY
         )
@@ -521,6 +535,9 @@ def main() -> int:
             ],
             "stress_spatial_diagnostic": stress_spatial_diagnostic_to_dict(
                 stress_spatial_diagnostic
+            ),
+            "critical_stress_assessment": critical_stress_assessment_to_dict(
+                critical_stress_assessment
             ),
             "raw_stress_discretization_eligibility": (
                 discretization_error_estimate_to_dict(raw_stress_error_eligibility)
